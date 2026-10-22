@@ -133,6 +133,9 @@ function Village({
     pushFeed(line);
     if (share) p2p.send({ k: "feed", text: line });
   };
+  hooks.current.onGreet = (id) => {
+    p2p.send({ k: "hi", n: name }, id);
+  };
 
   function pushFeed(text: string) {
     const clean = text.replace(/\s+/g, " ").trim().slice(0, 140);

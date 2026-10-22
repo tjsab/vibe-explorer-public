@@ -28,6 +28,7 @@ export type WorldHooks = {
   onStatus: (s: Status) => void;
   onHarvest: (id: number, until: number) => void;
   onFeed: (line: string, share?: boolean) => void;
+  onGreet?: (id: string, name: string) => void;
 };
 
 const ACTIONS: Action[] = ["idle", "walk", "dance", "sit", "quiet", "sing", "wave", "eat"];
@@ -192,7 +193,37 @@ function grassTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function makeAvatar(cloth: number, skin: number, name: string, showName: boolean): THREE.Group {
+function makeLiveDot(): THREE.Sprite {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const g = canvas.getContext("2d");
+  if (!g) throw new Error("canvas");
+  g.fillStyle = "rgba(61, 220, 132, 0.35)";
+  g.beginPath();
+  g.arc(32, 32, 30, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "#3ddc84";
+  g.beginPath();
+  g.arc(32, 32, 16, 0, Math.PI * 2);
+  g.fill();
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map, transparent: true, depthWrite: false }));
+  sprite.name = "live-dot";
+  sprite.scale.set(0.32, 0.32, 1);
+  sprite.renderOrder = 13;
+  return sprite;
+}
+
+function placeLiveDot(group: THREE.Object3D, name: string) {
+  const dot = group.getObjectByName("live-dot");
+  if (!dot) return;
+  const width = Math.min(4.2, 1.3 + name.length * 0.11);
+  dot.position.set(-width / 2 + 0.02, 2.38, 0.02);
+}
+
+function makeAvatar(cloth: number, skin: number, name: string, showName: boolean, live = false): THREE.Group {
   const group = new THREE.Group();
   const pivot = new THREE.Group();
   group.add(pivot);
@@ -243,7 +274,13 @@ function makeAvatar(cloth: number, skin: number, name: string, showName: boolean
   pivot.add(notes);
   if (showName && name) {
     const label = makeSprite(name, "rgba(36,28,22,0.78)", "#f6efe6", 2.35);
+    label.name = "nameplate";
     group.add(label);
+  }
+  if (live && name) {
+    group.add(makeLiveDot());
+    placeLiveDot(group, name);
+    group.userData.live = true;
   }
   const chat = makeSprite("", "rgba(36,28,22,0.82)", "#f6efe6", showName ? 3.05 : 2.45);
   group.add(chat);
@@ -303,6 +340,11 @@ function animateAvatar(group: THREE.Object3D, action: Action, elapsed: number) {
   if (rig.chatUntil > 0 && elapsed > rig.chatUntil) {
     rig.chat.visible = false;
     rig.chatUntil = 0;
+  }
+  const dot = group.getObjectByName("live-dot");
+  if (dot) {
+    const s = 0.32 + Math.sin(elapsed * 3.1) * 0.045;
+    dot.scale.set(s, s, 1);
   }
 }
 
@@ -466,6 +508,7 @@ export class VillageWorld {
   private nextVillagerNote = 3;
   private lastFeed = "";
   private greetTimer = 0;
+  private readonly met = new Set<string>();
   private nearby = "";
   private lastStatus = "";
   private aspect = 1;
@@ -726,7 +769,9 @@ export class VillageWorld {
     let remote = this.remotes.get(id);
     const shown = asAnon(pose.n, id);
     if (!remote) {
-      const group = makeAvatar(pose.c, 0xffd2b8, shown, true);
+      const group = makeAvatar(pose.c, 0xffd2b8, shown, true, true);
+      group.userData.kind = "live";
+      group.userData.id = id;
       group.position.set(pose.x, 0, pose.z);
       this.scene.add(group);
       remote = {
@@ -753,6 +798,7 @@ export class VillageWorld {
       remote.name = shown;
       const label = remote.group.children.find((c) => c instanceof THREE.Sprite && c !== (remote.group.userData.rig as Rig).chat);
       if (label instanceof THREE.Sprite) setSprite(label, remote.name);
+      placeLiveDot(remote.group, remote.name);
     }
   }
 
@@ -773,6 +819,7 @@ export class VillageWorld {
       if (ids.has(id)) continue;
       this.scene.remove(remote.group);
       this.remotes.delete(id);
+      this.met.delete(id);
     }
   }
 
@@ -1137,6 +1184,7 @@ export class VillageWorld {
     const roots: THREE.Object3D[] = [
       ...this.crops.map((c) => c.mesh),
       ...this.people.map((p) => p.group),
+      ...[...this.remotes.values()].map((r) => r.group),
     ];
     const hits = this.raycaster.intersectObjects(roots, true);
     if (!hits.length) return;
@@ -1163,6 +1211,22 @@ export class VillageWorld {
       const line = person.lines[person.line % person.lines.length];
       person.line += 1;
       this.hooks.onTalk(person.name, line);
+      return;
+    }
+    if (obj.userData.kind === "live") {
+      const remote = this.remotes.get(String(obj.userData.id));
+      if (!remote) return;
+      if (Math.hypot(remote.x - this.px, remote.z - this.pz) > 8) {
+        this.hooks.onToast(`Walk closer to ${remote.name}.`);
+        return;
+      }
+      this.emote = "wave";
+      this.emoteUntil = this.elapsed + 1.6;
+      this.facing = Math.atan2(remote.x - this.px, remote.z - this.pz);
+      this.player.rotation.y = this.facing;
+      this.hooks.onToast(`You wave to ${remote.name}.`);
+      this.feed(`${this.name} waves to ${remote.name}.`, true);
+      this.hooks.onGreet?.(remote.id, remote.name);
     }
   }
 
@@ -1261,6 +1325,7 @@ export class VillageWorld {
     this.noteVillagers();
     this.stepCritters(dt);
     this.stepRemotes(dt);
+    this.noteMeetings();
     this.stepFire();
     this.stepFlies();
     this.stepBirds(dt);
@@ -1294,14 +1359,24 @@ export class VillageWorld {
       if (crop.until <= now) mature += 1;
       else sprouts += 1;
     }
+    const person = this.nearestRemote(4.4);
     let next = "";
     if (mature) next = mature === 1 ? "A plot is ready to pick." : `${mature} plots are ready.`;
     else if (sprouts) next = "Tend a sprout to hurry it.";
-    else if (this.nearestRemote(4.4)) next = "Close enough to share food.";
+    else if (person) next = `${person.name} is here. Tap them to wave.`;
     else if (this.food > 0) next = `Basket ${this.food}. The garden is to the west.`;
     if (next !== this.nearby) {
       this.nearby = next;
       this.emitStatus();
+    }
+  }
+
+  private noteMeetings() {
+    for (const remote of this.remotes.values()) {
+      if (this.met.has(remote.id)) continue;
+      if (Math.hypot(remote.x - this.px, remote.z - this.pz) > 3.2) continue;
+      this.met.add(remote.id);
+      this.feed(`${this.name} and ${remote.name} meet in the meadow.`, true);
     }
   }
 
