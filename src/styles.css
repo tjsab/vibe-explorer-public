@@ -1,0 +1,438 @@
+@import "tailwindcss";
+@source "./";
+@source "../site";
+
+@theme {
+  --font-display: "Fraunces", Georgia, serif;
+  --font-sans: "Nunito", "Segoe UI", sans-serif;
+  --color-ink: #241c16;
+  --color-cream: #f6efe6;
+  --color-sand: #e7d7c3;
+  --color-muted: #b6a48f;
+  --color-amber: #e39b32;
+  --color-leaf: #3f7d49;
+  --color-bark: #5c4033;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--color-ink);
+    color: var(--color-cream);
+    font-family: var(--font-sans);
+  }
+}
+
+.vibe-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  background: #8ebfe0;
+  font-family: var(--font-sans);
+  color: var(--color-cream);
+}
+
+.vibe-stage {
+  position: absolute;
+  inset: 0;
+}
+
+.vibe-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.vibe-boot {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-ink);
+  color: var(--color-cream);
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+}
+
+.vibe-glass {
+  background: color-mix(in srgb, var(--color-ink) 84%, transparent);
+  color: var(--color-cream);
+  border: 1px solid color-mix(in srgb, var(--color-sand) 36%, transparent);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--color-ink) 28%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.vibe-hud {
+  position: absolute;
+  z-index: 3;
+  top: calc(10px + env(safe-area-inset-top));
+  left: max(10px, env(safe-area-inset-left));
+  right: max(108px, calc(env(safe-area-inset-right) + 98px));
+  padding: 10px 14px;
+  border-radius: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vibe-kicker {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.vibe-hud h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  font-weight: 680;
+  line-height: 1.1;
+  color: var(--color-cream);
+}
+
+.vibe-name {
+  width: 100%;
+  margin: 2px 0 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-cream);
+  font: inherit;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.vibe-name:focus {
+  outline: none;
+}
+
+.vibe-presence {
+  margin: 0;
+  color: var(--color-sand);
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.vibe-roomrow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.vibe-code {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-amber);
+}
+
+.vibe-iconbtn,
+.vibe-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-sand) 42%, transparent);
+  background: color-mix(in srgb, var(--color-cream) 12%, transparent);
+  color: var(--color-cream);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.92rem;
+  padding: 0 12px;
+}
+
+.vibe-iconbtn {
+  padding: 0 14px;
+}
+
+.vibe-btn[data-on="true"] {
+  background: var(--color-amber);
+  color: var(--color-ink);
+  border-color: transparent;
+}
+
+.vibe-btn:focus-visible,
+.vibe-iconbtn:focus-visible,
+.vibe-name:focus-visible,
+.vibe-field:focus-visible {
+  outline: 2px solid var(--color-amber);
+  outline-offset: 2px;
+}
+
+.vibe-btn:active,
+.vibe-iconbtn:active {
+  transform: translateY(1px);
+}
+
+.vibe-peek {
+  position: absolute;
+  z-index: 5;
+  top: calc(10px + env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-sand) 42%, transparent);
+  background: color-mix(in srgb, var(--color-ink) 78%, transparent);
+  color: var(--color-cream);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.92rem;
+  backdrop-filter: blur(14px);
+}
+
+.vibe-stage[data-clean="true"] .vibe-peek {
+  width: 44px;
+  padding: 0;
+  background: color-mix(in srgb, var(--color-ink) 42%, transparent);
+}
+
+.vibe-peek:focus-visible {
+  outline: 2px solid var(--color-amber);
+  outline-offset: 2px;
+}
+
+.vibe-stage[data-clean="true"] .vibe-hud,
+.vibe-stage[data-clean="true"] .vibe-dock > :not(.vibe-talk) {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.vibe-stage[data-clean="true"] .vibe-dock {
+  pointer-events: none;
+}
+
+.vibe-stage[data-clean="true"] .vibe-talk {
+  pointer-events: auto;
+}
+
+.vibe-dock {
+  position: absolute;
+  z-index: 3;
+  left: max(10px, env(safe-area-inset-left));
+  right: max(10px, env(safe-area-inset-right));
+  bottom: calc(132px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vibe-note,
+.vibe-talk {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 1rem;
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
+.vibe-talk {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vibe-talk strong {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+}
+
+.vibe-talk p {
+  margin: 0;
+}
+
+.vibe-talk-x {
+  align-self: flex-end;
+  min-height: 36px;
+  min-width: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--color-sand);
+  font-weight: 700;
+}
+
+.vibe-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.vibe-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.vibe-btn {
+  flex: 0 0 auto;
+}
+
+.vibe-chat {
+  display: flex;
+  gap: 6px;
+}
+
+.vibe-field {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-sand) 42%, transparent);
+  background: color-mix(in srgb, var(--color-ink) 72%, transparent);
+  color: var(--color-cream);
+  padding: 0 14px;
+  font: inherit;
+  font-size: 1rem;
+}
+
+.vibe-field::placeholder {
+  color: var(--color-muted);
+}
+
+.vibe-joy {
+  position: absolute;
+  z-index: 3;
+  left: max(12px, env(safe-area-inset-left));
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  width: 116px;
+  height: 116px;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, transparent 34%, color-mix(in srgb, var(--color-cream) 10%, transparent) 35%, transparent 36%),
+    color-mix(in srgb, var(--color-ink) 28%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-sand) 38%, transparent);
+  touch-action: none;
+}
+
+.vibe-stage[data-clean="true"] .vibe-joy {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--color-cream) 32%, transparent);
+}
+
+.vibe-knob {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  left: 34px;
+  top: 34px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-cream) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-cream) 70%, transparent);
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--color-ink) 30%, transparent);
+  pointer-events: none;
+}
+
+.vibe-stage[data-clean="true"] .vibe-knob {
+  opacity: 0.45;
+}
+
+.vibe-joy.is-pressed {
+  background: color-mix(in srgb, var(--color-ink) 40%, transparent);
+  border-color: color-mix(in srgb, var(--color-sand) 70%, transparent);
+}
+
+.vibe-joy.is-pressed .vibe-knob,
+.vibe-stage[data-clean="true"] .vibe-joy.is-pressed .vibe-knob {
+  opacity: 1;
+  background: var(--color-amber);
+}
+
+.vibe-more {
+  margin-top: 2px;
+  font-size: 0.8rem;
+  color: var(--color-sand);
+}
+
+.vibe-more summary {
+  cursor: pointer;
+  min-height: 28px;
+}
+
+.vibe-more form {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.vibe-leaf {
+  color: var(--color-leaf);
+}
+
+@media (max-width: 899px) {
+  .vibe-kicker,
+  .vibe-hud h1 {
+    display: none;
+  }
+
+  .vibe-presence {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .vibe-stage[data-clean="true"] .vibe-dock {
+    left: max(12px, env(safe-area-inset-left));
+    right: max(64px, env(safe-area-inset-right));
+    bottom: calc(18px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (min-width: 900px) {
+  .vibe-hud {
+    right: auto;
+    width: 340px;
+    padding: 12px 14px 10px;
+    gap: 4px;
+  }
+  .vibe-kicker,
+  .vibe-hud h1 {
+    display: block;
+  }
+  .vibe-dock {
+    left: 50%;
+    right: auto;
+    width: min(520px, calc(100% - 180px));
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+  }
+  .vibe-actions {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow: visible;
+  }
+  .vibe-stage[data-clean="true"] .vibe-dock {
+    left: 50%;
+    bottom: calc(18px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (pointer: coarse) {
+  .keys-hint {
+    display: none;
+  }
+}

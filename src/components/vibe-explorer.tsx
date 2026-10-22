@@ -1,0 +1,474 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  Armchair,
+  Eye,
+  EyeOff,
+  Flower2,
+  Gift,
+  Hand,
+  Link,
+  Music,
+  Send,
+  Sprout,
+  Utensils,
+  X,
+} from "lucide-react";
+import { useP2PRoom, type PeerInfo } from "@/lib/multiplayer";
+import { VillageWorld, asAnon, isPose, type CropSnap, type PoseMsg, type Status, type WorldHooks } from "@/game/world";
+
+const CLOTHES = [0xb85c38, 0x3d7ea6, 0x3e8f6e, 0xc45c4a, 0x6b5b95, 0xc47b4a, 0x4a6670, 0x8c4a3a];
+
+type Talk = { name: string; line: string };
+type Reliable =
+  | { k: "chat"; text: string; n: string }
+  | { k: "harvest"; id: number; until: number }
+  | { k: "hi"; n: string }
+  | { k: "offer"; n: string }
+  | { k: "snapshot"; crops: CropSnap[] };
+
+function readRoom() {
+  const raw = new URLSearchParams(window.location.search).get("room") ?? "village";
+  const clean = raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24);
+  return clean || "village";
+}
+
+function readName() {
+  const saved = sessionStorage.getItem("vibe-name");
+  if (saved && /^Anon \d{4}$/.test(saved)) return saved;
+  const name = `Anon ${Math.floor(1000 + Math.random() * 9000)}`;
+  sessionStorage.setItem("vibe-name", name);
+  return name;
+}
+
+function readClean() {
+  try {
+    return localStorage.getItem("vibe-clean") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function readColor() {
+  const saved = Number(sessionStorage.getItem("vibe-color-i") ?? "");
+  if (Number.isInteger(saved) && saved >= 0 && saved < CLOTHES.length) return CLOTHES[saved];
+  const i = Math.floor(Math.random() * CLOTHES.length);
+  sessionStorage.setItem("vibe-color-i", String(i));
+  return CLOTHES[i];
+}
+
+function presenceLine(joined: boolean, peers: PeerInfo[]) {
+  if (!joined) return "Opening a shared path…";
+  const label = (p: PeerInfo) => asAnon(p.name || "", p.id);
+  const here = peers.filter((p) => p.connectionState === "connected");
+  const failed = peers.filter((p) => p.connectionState === "failed" || p.connectionState === "closed");
+  if (peers.length === 0) return "Just you and the villagers. Send the link to invite someone.";
+  if (here.length === 0 && failed.length === peers.length) {
+    return `${failed.map(label).join(", ")} couldn't connect directly. A strict network sometimes blocks the path.`;
+  }
+  if (here.length === 0) return `${peers.map(label).join(", ")} is on the way.`;
+  const extra = peers.length - here.length;
+  const base = `Here with you: ${here.map(label).join(", ")}`;
+  return extra > 0 ? `${base}. ${extra} still finding a path.` : base;
+}
+
+function Village({
+  room,
+  name,
+  color,
+  onRename,
+  onRoom,
+}: {
+  room: string;
+  name: string;
+  color: number;
+  onRename: (name: string) => void;
+  onRoom: (room: string) => void;
+}) {
+  const p2p = useP2PRoom({ room, name });
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const worldRef = useRef<VillageWorld | null>(null);
+  const hooks = useRef<WorldHooks>({
+    onTalk: () => undefined,
+    onToast: () => undefined,
+    onStatus: () => undefined,
+    onHarvest: () => undefined,
+  });
+  const [toast, setToast] = useState("Welcome to the meadow.");
+  const [talk, setTalk] = useState<Talk | null>(null);
+  const [status, setStatus] = useState<Status>({
+    food: 0,
+    singing: false,
+    sitting: false,
+    quiet: false,
+    nearby: "",
+  });
+  const [chat, setChat] = useState("");
+  const [roomDraft, setRoomDraft] = useState(room);
+  const [copied, setCopied] = useState(false);
+  const [clean, setClean] = useState(readClean);
+  const seen = useRef(new Set<string>());
+  const joyRef = useRef<HTMLDivElement>(null);
+  const knobRef = useRef<HTMLDivElement>(null);
+
+  hooks.current.onTalk = (who, line) => setTalk({ name: who, line });
+  hooks.current.onToast = (msg) => setToast(msg);
+  hooks.current.onStatus = (next) => setStatus(next);
+  hooks.current.onHarvest = (id, until) => p2p.send({ k: "harvest", id, until });
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const world = new VillageWorld(canvas, hooks.current, { name, color });
+    worldRef.current = world;
+    return () => {
+      world.dispose();
+      worldRef.current = null;
+    };
+  }, [name, color]);
+
+  useEffect(() => {
+    return p2p.onMessage((from, data, channel) => {
+      const world = worldRef.current;
+      if (!world || !data || typeof data !== "object") return;
+      const msg = data as Reliable | PoseMsg;
+      if (channel === "state" && isPose(msg)) {
+        world.upsertRemote(from, msg);
+        return;
+      }
+      if (channel !== "reliable" || !("k" in msg)) return;
+      if (msg.k === "chat" && typeof msg.text === "string") {
+        world.setRemoteChat(from, msg.text.slice(0, 80));
+      } else if (msg.k === "harvest" && typeof msg.id === "number" && typeof msg.until === "number") {
+        world.applyHarvest(msg.id, msg.until);
+      } else if (msg.k === "snapshot" && Array.isArray(msg.crops)) {
+        world.applySnapshot(msg.crops);
+      } else if (msg.k === "hi" && typeof msg.n === "string") {
+        world.pulseHello(from);
+        setToast(`${asAnon(msg.n, from)} waves hello.`);
+      } else if (msg.k === "offer" && typeof msg.n === "string") {
+        world.receiveFood(asAnon(msg.n, from));
+      }
+    });
+  }, [p2p.onMessage]);
+
+  useEffect(() => {
+    let raf = 0;
+    let last = 0;
+    const loop = (now: number) => {
+      const world = worldRef.current;
+      if (world && now - last >= 50) {
+        p2p.broadcast(world.getPose());
+        last = now;
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [p2p.broadcast]);
+
+  useEffect(() => {
+    const world = worldRef.current;
+    const connected = p2p.peers.filter((p) => p.connectionState === "connected").map((p) => p.id);
+    const connectedSet = new Set(connected);
+    for (const id of connected) {
+      if (seen.current.has(id)) continue;
+      const already = [p2p.selfId, ...connected.filter((x) => x !== id && seen.current.has(x))];
+      const smallest = already.reduce((a, b) => (a < b ? a : b));
+      if (smallest === p2p.selfId && world) {
+        p2p.send({ k: "snapshot", crops: world.getCropSnapshot() }, id);
+      }
+      seen.current.add(id);
+    }
+    for (const id of [...seen.current]) {
+      if (!connectedSet.has(id)) seen.current.delete(id);
+    }
+    world?.retainRemotes(connectedSet);
+  }, [p2p.peers, p2p.selfId, p2p.send]);
+
+  useEffect(() => {
+    const el = joyRef.current;
+    const knob = knobRef.current;
+    if (!el || !knob) return;
+    let active = false;
+    let pointer = -1;
+    const update = (e: PointerEvent) => {
+      const rect = el.getBoundingClientRect();
+      const max = rect.width * 0.36;
+      let dx = e.clientX - (rect.left + rect.width / 2);
+      let dy = e.clientY - (rect.top + rect.height / 2);
+      const dist = Math.min(Math.hypot(dx, dy), max) || 0;
+      const ang = Math.atan2(dy, dx);
+      dx = Math.cos(ang) * dist;
+      dy = Math.sin(ang) * dist;
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      worldRef.current?.setJoy(dx / max, -dy / max);
+    };
+    const down = (e: PointerEvent) => {
+      active = true;
+      pointer = e.pointerId;
+      el.classList.add("is-pressed");
+      el.setPointerCapture(e.pointerId);
+      update(e);
+    };
+    const move = (e: PointerEvent) => {
+      if (!active || e.pointerId !== pointer) return;
+      update(e);
+    };
+    const up = (e: PointerEvent) => {
+      if (e.pointerId !== pointer) return;
+      active = false;
+      el.classList.remove("is-pressed");
+      knob.style.transform = "translate(0px, 0px)";
+      worldRef.current?.setJoy(0, 0);
+    };
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    return () => {
+      el.removeEventListener("pointerdown", down);
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(""), 4200);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+      if (e.code !== "KeyH" || e.metaKey || e.ctrlKey || e.altKey) return;
+      setClean((value) => {
+        const next = !value;
+        try {
+          localStorage.setItem("vibe-clean", next ? "1" : "0");
+        } catch {
+          /* private mode */
+        }
+        return next;
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const toggleClean = () => {
+    setClean((value) => {
+      const next = !value;
+      try {
+        localStorage.setItem("vibe-clean", next ? "1" : "0");
+      } catch {
+        /* private mode */
+      }
+      return next;
+    });
+  };
+
+  const copyLink = async () => {
+    const url = new URL(window.location.href);
+    if (room === "village") url.searchParams.delete("room");
+    else url.searchParams.set("room", room);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setCopied(true);
+      setToast("Link copied. Anyone who opens it joins this meadow.");
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setToast(`Share this page. Room code: ${room}`);
+    }
+  };
+
+  const commitRoom = (value: string) => {
+    const clean = value.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "village";
+    setRoomDraft(clean);
+    if (clean !== room) onRoom(clean);
+  };
+
+  return (
+    <div className="vibe-stage" data-clean={clean ? "true" : "false"}>
+      <canvas ref={canvasRef} className="vibe-canvas" />
+      <button
+        type="button"
+        className="vibe-peek"
+        aria-pressed={clean}
+        aria-keyshortcuts="H"
+        aria-label={clean ? "Show controls" : "Hide controls for a clear view"}
+        onClick={toggleClean}
+      >
+        {clean ? <Eye className="size-5" aria-hidden="true" /> : <EyeOff className="size-5" aria-hidden="true" />}
+        {clean ? null : <span>Hide</span>}
+      </button>
+      <header className="vibe-hud vibe-glass">
+        <p className="vibe-kicker">Shared meadow</p>
+        <h1>Vibe Explorer</h1>
+        <input
+          className="vibe-name"
+          aria-label="Your name"
+          defaultValue={name}
+          maxLength={24}
+          onBlur={(e) => onRename(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+        />
+        <p className="vibe-presence">{presenceLine(p2p.joined, p2p.peers)}</p>
+        <div className="vibe-roomrow">
+          <span className="vibe-code">{p2p.joined ? "Live" : "Linking"} · {room}</span>
+          <button type="button" className="vibe-iconbtn" onClick={() => void copyLink()}>
+            <Link className="size-4" aria-hidden="true" />
+            {copied ? "Copied" : "Invite"}
+          </button>
+        </div>
+        <details className="vibe-more">
+          <summary>Private room</summary>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              commitRoom(roomDraft);
+            }}
+          >
+            <input
+              className="vibe-field"
+              aria-label="Room code"
+              value={roomDraft}
+              onChange={(e) => setRoomDraft(e.target.value)}
+              maxLength={24}
+            />
+            <button type="submit" className="vibe-iconbtn">
+              Join
+            </button>
+          </form>
+        </details>
+      </header>
+
+      <div className="vibe-dock">
+        {talk ? (
+          <article className="vibe-talk vibe-glass">
+            <button type="button" className="vibe-talk-x" onClick={() => setTalk(null)} aria-label="Close">
+              <X className="size-4" />
+            </button>
+            <strong>{talk.name}</strong>
+            <p>{talk.line}</p>
+          </article>
+        ) : toast ? (
+          <p className="vibe-note vibe-glass">{toast}</p>
+        ) : status.nearby ? (
+          <p className="vibe-note vibe-glass">{status.nearby}</p>
+        ) : (
+          <p className="vibe-note vibe-glass keys-hint">WASD to walk. Click a villager to talk.</p>
+        )}
+        <div className="vibe-actions">
+          <button type="button" className="vibe-btn" onClick={() => {
+            worldRef.current?.doWave();
+            p2p.send({ k: "hi", n: name });
+          }}>
+            <Hand className="size-4" aria-hidden="true" /> Wave
+          </button>
+          <button type="button" className="vibe-btn" data-on={status.singing} aria-pressed={status.singing} onClick={() => worldRef.current?.doSing()}>
+            <Music className="size-4" aria-hidden="true" /> Sing
+          </button>
+          <button type="button" className="vibe-btn" onClick={() => worldRef.current?.doDance()}>
+            <Flower2 className="size-4" aria-hidden="true" /> Dance
+          </button>
+          <button type="button" className="vibe-btn" data-on={status.quiet} aria-pressed={status.quiet} onClick={() => worldRef.current?.doQuiet()}>
+            <Flower2 className="size-4" aria-hidden="true" /> Quiet
+          </button>
+          <button type="button" className="vibe-btn" onClick={() => worldRef.current?.doHarvest()}>
+            <Sprout className="size-4" aria-hidden="true" /> Pick
+          </button>
+          <button type="button" className="vibe-btn" data-on={status.sitting} aria-pressed={status.sitting} onClick={() => worldRef.current?.doSit()}>
+            <Armchair className="size-4" aria-hidden="true" /> Sit
+          </button>
+          <button type="button" className="vibe-btn" onClick={() => worldRef.current?.doEat()}>
+            <Utensils className="size-4" aria-hidden="true" /> Eat · {status.food}
+          </button>
+          <button type="button" className="vibe-btn" onClick={() => {
+            const near = worldRef.current?.tryOffer();
+            if (near) p2p.send({ k: "offer", n: name }, near.id);
+          }}>
+            <Gift className="size-4" aria-hidden="true" /> Share
+          </button>
+        </div>
+        <form
+          className="vibe-chat"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const text = chat.trim().slice(0, 80);
+            if (!text) return;
+            worldRef.current?.say(text);
+            p2p.send({ k: "chat", text, n: name });
+            setChat("");
+          }}
+        >
+          <input
+            className="vibe-field"
+            aria-label="Say something"
+            placeholder="Say something"
+            value={chat}
+            maxLength={80}
+            onChange={(e) => setChat(e.target.value)}
+          />
+          <button type="submit" className="vibe-iconbtn" aria-label="Send">
+            <Send className="size-4" />
+          </button>
+        </form>
+      </div>
+
+      <div className="vibe-joy" ref={joyRef} aria-hidden="true">
+        <div className="vibe-knob" ref={knobRef} />
+      </div>
+    </div>
+  );
+}
+
+export function VibeExplorer() {
+  const [ready, setReady] = useState(false);
+  const [room, setRoom] = useState("village");
+  const [name, setName] = useState("Friend");
+  const [color, setColor] = useState(CLOTHES[0]);
+
+  useEffect(() => {
+    setRoom(readRoom());
+    setName(readName());
+    setColor(readColor());
+    setReady(true);
+  }, []);
+
+  const commitRoom = (next: string) => {
+    const url = new URL(window.location.href);
+    if (next === "village") url.searchParams.delete("room");
+    else url.searchParams.set("room", next);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    setRoom(next);
+  };
+
+  const commitName = (next: string) => {
+    const clean = next.replace(/\s+/g, " ").trim().slice(0, 24);
+    if (!clean || clean === name) return;
+    sessionStorage.setItem("vibe-name", clean);
+    setName(clean);
+  };
+
+  return (
+    <main className="vibe-root">
+      {ready ? (
+        <Village
+          key={`${room}:${name}`}
+          room={room}
+          name={name}
+          color={color}
+          onRename={commitName}
+          onRoom={commitRoom}
+        />
+      ) : (
+        <div className="vibe-boot">Opening the meadow…</div>
+      )}
+    </main>
+  );
+}
