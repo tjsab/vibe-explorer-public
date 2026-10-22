@@ -1,97 +1,21 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <meta http-equiv="Cache-Control" content="no-cache">
-  <meta name="vibe-version" content="20261022-flute">
-  <title>Vibe Explorer</title>
-  <style>
-    body { margin: 0; overflow: hidden; font-family: system-ui, sans-serif; background: #111; touch-action: none; }
-    #info {
-      position: absolute;
-      top: 12px;
-      left: 12px;
-      color: white;
-      background: rgba(0,0,0,0.55);
-      padding: 12px 16px;
-      border-radius: 14px;
-      backdrop-filter: blur(10px);
-      z-index: 10;
-      max-width: 280px;
-      pointer-events: none;
-    }
-    #info h1 { margin: 0 0 4px 0; font-size: 18px; }
-    #info p { margin: 0; font-size: 14px; opacity: 0.9; }
-    #controls {
-      position: absolute;
-      bottom: 90px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 6px;
-      z-index: 10;
-      flex-wrap: wrap;
-      justify-content: center;
-      max-width: 95%;
-    }
-    button {
-      background: rgba(255,255,255,0.18);
-      color: white;
-      border: 1px solid rgba(255,255,255,0.35);
-      padding: 10px 14px;
-      border-radius: 22px;
-      cursor: pointer;
-      backdrop-filter: blur(8px);
-      font-size: 14px;
-      touch-action: manipulation;
-    }
-    button:hover, button:active { background: rgba(255,255,255,0.32); }
-    #joystick {
-      position: absolute;
-      bottom: 20px;
-      left: 20px;
-      width: 120px;
-      height: 120px;
-      background: rgba(255,255,255,0.12);
-      border: 2px solid rgba(255,255,255,0.3);
-      border-radius: 50%;
-      z-index: 10;
-      touch-action: none;
-    }
-    #joystick-knob {
-      position: absolute;
-      width: 50px;
-      height: 50px;
-      background: rgba(255,255,255,0.7);
-      border-radius: 50%;
-      top: 35px;
-      left: 35px;
-      pointer-events: none;
-    }
-  </style>
-</head>
-<body>
-  <div id="info">
-    <h1>Vibe Explorer</h1>
-    <p id="name">Joining...</p>
-  </div>
-  <div id="controls">
-    <button onclick="sayHello()">✨ Greet</button>
-    <button onclick="startSinging()">🎵 Sing</button>
-    <button onclick="dance()">💃 Dance</button>
-    <button onclick="pray()">🙏 Pray</button>
-    <button onclick="harvestNearby()">🌾 Harvest</button>
-    <button onclick="sit()">🪑 Sit</button>
-  </div>
-  <div id="joystick"><div id="joystick-knob"></div></div>
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js"
-    }
-  }
-  </script>
-  <script type="module" src="main.js?v=20261022-flute"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="vibe-version" content="meadow-anon" />
+    <title>Vibe Explorer</title>
+    <link rel="icon" href="data:," />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,680&family=Nunito:wght@520;700&display=swap"
+    />
+    <script type="module" crossorigin src="/vibe-explorer-public/assets/index-BRhPZ2PV.js"></script>
+    <link rel="stylesheet" crossorigin href="/vibe-explorer-public/assets/index-DnZhpdks.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
 </html>
