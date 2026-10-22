@@ -343,7 +343,8 @@ function animateAvatar(group: THREE.Object3D, action: Action, elapsed: number) {
   }
   const dot = group.getObjectByName("live-dot");
   if (dot) {
-    const s = 0.32 + Math.sin(elapsed * 3.1) * 0.045;
+    const talking = group.userData.talking === true;
+    const s = talking ? 0.48 + Math.sin(elapsed * 8) * 0.08 : 0.32 + Math.sin(elapsed * 3.1) * 0.045;
     dot.scale.set(s, s, 1);
   }
 }
@@ -836,6 +837,16 @@ export class VillageWorld {
     if (!line || line === this.lastFeed) return;
     this.lastFeed = line;
     this.hooks.onFeed(line, share);
+  }
+
+  announce(line: string) {
+    this.feed(line, true);
+  }
+
+  setTalking(id: string, on: boolean) {
+    const remote = this.remotes.get(id);
+    if (!remote) return;
+    remote.group.userData.talking = on;
   }
 
   say(text: string) {

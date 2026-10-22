@@ -338,6 +338,12 @@
   margin: 0;
 }
 
+.vibe-callrow {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .vibe-talk-x {
   align-self: flex-end;
   min-height: 36px;

@@ -72,6 +72,8 @@ interface PeerSlot {
   recreatedForOffer?: boolean;
   info: PeerInfo;
   pingSentAt?: number;
+  audioSender?: RTCRtpSender;
+  playback?: HTMLAudioElement;
 }
 
 const FAST_POLL_MS = 400;
@@ -88,6 +90,27 @@ export function rtcBase(): string {
 }
 const MAX_RECOVERY_ATTEMPTS = 3;
 const SIGNAL_RETRY_DELAYS_MS = [250, 750];
+
+export function leanVoice(desc: RTCSessionDescriptionInit): RTCSessionDescriptionInit {
+  if (!desc.sdp) return desc;
+  const map = desc.sdp.match(/a=rtpmap:(\d+) opus\/48000(?:\/2)?/i);
+  if (!map) return desc;
+  const pt = map[1];
+  const extra = "maxaveragebitrate=16000;stereo=0;sprop-stereo=0;usedtx=1";
+  const fmtp = new RegExp(`a=fmtp:${pt} ([^\\r\\n]+)`);
+  let sdp = desc.sdp;
+  if (fmtp.test(sdp)) {
+    sdp = sdp.replace(fmtp, (_all, params: string) =>
+      params.includes("maxaveragebitrate") ? `a=fmtp:${pt} ${params}` : `a=fmtp:${pt} ${params};${extra}`,
+    );
+  } else {
+    sdp = sdp.replace(
+      new RegExp(`a=rtpmap:${pt} opus/48000(?:/2)?`, "i"),
+      (line) => `${line}\r\na=fmtp:${pt} ${extra}`,
+    );
+  }
+  return { type: desc.type, sdp };
+}
 
 export function defaultIceServers(): RTCIceServer[] {
   const urls = (import.meta.env.VITE_STUN_URLS as string | undefined)
@@ -115,6 +138,9 @@ export class P2PRoom {
   private everPolled = false;
   private misses = 0;
   private lastPeersFingerprint = "";
+  private mic: MediaStream | null = null;
+  private voicePeer: string | null = null;
+  private speaker: HTMLAudioElement | null = null;
 
   constructor(opts: P2PRoomOptions) {
     this.opts = opts;
@@ -141,6 +167,7 @@ export class P2PRoom {
 
   close(): void {
     this.closed = true;
+    this.endVoice();
     if (this.pollTimer) clearTimeout(this.pollTimer);
     if (this.pingTimer) clearInterval(this.pingTimer);
     for (const slot of this.peers.values()) slot.pc.close();
@@ -169,6 +196,79 @@ export class P2PRoom {
     const targets = peerId ? [this.peers.get(peerId)] : [...this.peers.values()];
     for (const slot of targets) {
       if (slot?.reliable?.readyState === "open") slot.reliable.send(wire);
+    }
+  }
+
+  /** Voice only, one person, about 16 kbps while you talk and almost nothing in the pauses. */
+  async beginVoice(peerId: string): Promise<"ok" | "no-mic" | "not-ready"> {
+    const slot = this.peers.get(peerId);
+    if (!slot || slot.info.connectionState !== "connected") return "not-ready";
+    this.unlockSpeaker();
+    if (!navigator.mediaDevices?.getUserMedia) return "no-mic";
+    try {
+      if (!this.mic) {
+        this.mic = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+      }
+    } catch {
+      return "no-mic";
+    }
+    const track = this.mic.getAudioTracks()[0];
+    if (!track) return "no-mic";
+    if (this.voicePeer && this.voicePeer !== peerId) this.endVoice();
+    this.voicePeer = peerId;
+    track.enabled = true;
+    if (!slot.audioSender) slot.audioSender = slot.pc.addTrack(track, this.mic);
+    else await slot.audioSender.replaceTrack(track);
+    return "ok";
+  }
+
+  endVoice() {
+    const id = this.voicePeer;
+    this.voicePeer = null;
+    const slot = id ? this.peers.get(id) : undefined;
+    if (slot?.audioSender) void slot.audioSender.replaceTrack(null);
+    this.mic?.getTracks().forEach((track) => track.stop());
+    this.mic = null;
+    if (slot?.playback) {
+      slot.playback.pause();
+      slot.playback.srcObject = null;
+    }
+  }
+
+  private unlockSpeaker() {
+    if (typeof Audio === "undefined") return;
+    this.speaker ??= new Audio();
+    this.speaker.autoplay = true;
+    void this.speaker.play().catch(() => undefined);
+  }
+
+  private hear(slot: PeerSlot, stream: MediaStream) {
+    if (typeof Audio === "undefined") return;
+    const audio = slot.playback ?? new Audio();
+    audio.autoplay = true;
+    audio.srcObject = stream;
+    slot.playback = audio;
+    void audio.play().catch(() => undefined);
+  }
+
+  private async publishLocal(pc: RTCPeerConnection) {
+    await pc.setLocalDescription();
+    const desc = pc.localDescription;
+    if (!desc?.sdp) return;
+    const leaned = leanVoice(desc);
+    if (!leaned.sdp || leaned.sdp === desc.sdp) return;
+    try {
+      await pc.setLocalDescription(leaned);
+    } catch {
+      /* the original description still stands */
     }
   }
 
@@ -249,6 +349,7 @@ export class P2PRoom {
     }
     for (const [id, slot] of this.peers) {
       if (!alive.has(id)) {
+        if (this.voicePeer === id) this.endVoice();
         slot.pc.close();
         this.peers.delete(id);
       }
@@ -306,7 +407,7 @@ export class P2PRoom {
     pc.onnegotiationneeded = async () => {
       try {
         slot.makingOffer = true;
-        await pc.setLocalDescription();
+        await this.publishLocal(pc);
         await this.sendSignal(peerId, "offer", pc.localDescription!.toJSON());
       } catch {
         // A failed offer is retried on the next negotiationneeded.
@@ -315,6 +416,14 @@ export class P2PRoom {
       }
     };
     pc.ondatachannel = (e) => this.attachChannel(slot, e.channel);
+    pc.ontrack = (e) => {
+      if (e.track.kind !== "audio") return;
+      const stream = e.streams[0] ?? new MediaStream([e.track]);
+      this.hear(slot, stream);
+      e.track.onended = () => {
+        if (slot.playback?.srcObject === stream) slot.playback.srcObject = null;
+      };
+    };
 
     if (initiator) {
       // Creating the channels triggers negotiationneeded → the offer.
@@ -420,7 +529,7 @@ export class P2PRoom {
         await this.flushPendingCandidates(slot);
         if (this.closed) return;
         if (kind === "offer") {
-          await slot.pc.setLocalDescription();
+          await this.publishLocal(slot.pc);
           if (this.closed) return;
           await this.sendSignal(from, "answer", slot.pc.localDescription!.toJSON());
         }

@@ -17,6 +17,8 @@ export interface P2PRoomHandle {
   joined: boolean;
   broadcast: (data: unknown) => void;
   send: (data: unknown, peerId?: string) => void;
+  beginVoice: (peerId: string) => Promise<"ok" | "no-mic" | "not-ready">;
+  endVoice: () => void;
   onMessage: (
     fn: (from: string, data: unknown, channel: "state" | "reliable") => void,
   ) => () => void;
@@ -59,6 +61,11 @@ export function useP2PRoom(options: UseP2PRoomOptions = {}): P2PRoomHandle {
 
   const broadcast = useCallback((data: unknown) => roomRef.current?.broadcast(data), []);
   const send = useCallback((data: unknown, peerId?: string) => roomRef.current?.send(data, peerId), []);
+  const beginVoice = useCallback(
+    (peerId: string) => roomRef.current?.beginVoice(peerId) ?? Promise.resolve("not-ready" as const),
+    [],
+  );
+  const endVoice = useCallback(() => roomRef.current?.endVoice(), []);
   const onMessage = useCallback(
     (fn: (from: string, data: unknown, channel: "state" | "reliable") => void) => {
       listeners.current.add(fn);
@@ -69,5 +76,5 @@ export function useP2PRoom(options: UseP2PRoomOptions = {}): P2PRoomHandle {
     [],
   );
 
-  return { selfId, room, peers, joined, broadcast, send, onMessage };
+  return { selfId, room, peers, joined, broadcast, send, beginVoice, endVoice, onMessage };
 }

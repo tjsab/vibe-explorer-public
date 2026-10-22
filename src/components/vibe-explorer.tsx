@@ -8,6 +8,7 @@ import {
   Hand,
   Link,
   Music,
+  Phone,
   Send,
   Sprout,
   Utensils,
@@ -25,9 +26,14 @@ type Reliable =
   | { k: "hi"; n: string }
   | { k: "offer"; n: string }
   | { k: "snapshot"; crops: CropSnap[] }
-  | { k: "feed"; text: string };
+  | { k: "feed"; text: string }
+  | { k: "call"; n: string }
+  | { k: "call-yes"; n: string }
+  | { k: "call-no" }
+  | { k: "call-end" };
 
 type FeedItem = { id: number; text: string };
+type CallState = { id: string; name: string; phase: "in" | "out" | "live" };
 
 function readRoom() {
   const raw = new URLSearchParams(window.location.search).get("room") ?? "village";
@@ -120,6 +126,7 @@ function Village({
   const [clean, setClean] = useState(readClean);
   const [topHidden, setTopHidden] = useState(readTopHidden);
   const [feed, setFeed] = useState<FeedItem[]>([]);
+  const [call, setCall] = useState<CallState | null>(null);
   const feedId = useRef(1);
   const seen = useRef(new Set<string>());
   const joyRef = useRef<HTMLDivElement>(null);
@@ -158,7 +165,7 @@ function Village({
   }, [name, color]);
 
   useEffect(() => {
-    return p2p.onMessage((from, data, channel) => {
+    return p2p.onMessage(async (from, data, channel) => {
       const world = worldRef.current;
       if (!world || !data || typeof data !== "object") return;
       const msg = data as Reliable | PoseMsg;
@@ -180,9 +187,41 @@ function Village({
         setToast(`${asAnon(msg.n, from)} waves hello.`);
       } else if (msg.k === "offer" && typeof msg.n === "string") {
         world.receiveFood(asAnon(msg.n, from));
+      } else if (msg.k === "call" && typeof msg.n === "string") {
+        const who = asAnon(msg.n, from);
+        setCall({ id: from, name: who, phase: "in" });
+        setToast(`${who} wants to talk.`);
+      } else if (msg.k === "call-yes") {
+        const result = await p2p.beginVoice(from);
+        if (result !== "ok") {
+          p2p.send({ k: "call-end" }, from);
+          setCall(null);
+          setToast(result === "no-mic" ? "The microphone stayed off." : "The talk couldn't start.");
+          return;
+        }
+        world.setTalking(from, true);
+        setCall((prev) => ({ id: from, name: prev?.name ?? "Someone", phase: "live" }));
+        setToast("You're talking. Voice only.");
+      } else if (msg.k === "call-no") {
+        setCall(null);
+        setToast("Not just now.");
+      } else if (msg.k === "call-end") {
+        p2p.endVoice();
+        worldRef.current?.setTalking(from, false);
+        setCall(null);
+        setToast("The talk rests.");
       }
     });
-  }, [p2p.onMessage]);
+  }, [p2p, name]);
+
+  useEffect(() => {
+    if (!call) return;
+    if (p2p.peers.some((peer) => peer.id === call.id)) return;
+    p2p.endVoice();
+    worldRef.current?.setTalking(call.id, false);
+    setCall(null);
+    setToast("The talk dropped.");
+  }, [call, p2p]);
 
   useEffect(() => {
     let raf = 0;
@@ -462,6 +501,47 @@ function Village({
         ) : (
           <p className="vibe-note vibe-glass keys-hint">WASD to walk. Click a villager to talk.</p>
         )}
+        {call?.phase === "in" ? (
+          <article className="vibe-talk vibe-glass">
+            <strong>{call.name}</strong>
+            <p>Wants a quiet voice talk. Audio only, about a phone call's worth of data.</p>
+            <div className="vibe-callrow">
+              <button
+                type="button"
+                className="vibe-btn"
+                onClick={() => {
+                  void (async () => {
+                    const result = await p2p.beginVoice(call.id);
+                    if (result !== "ok") {
+                      p2p.send({ k: "call-no" }, call.id);
+                      setCall(null);
+                      setToast(result === "no-mic" ? "The microphone stayed off. You can still wave and type." : "The talk couldn't start.");
+                      return;
+                    }
+                    p2p.send({ k: "call-yes", n: name }, call.id);
+                    worldRef.current?.setTalking(call.id, true);
+                    worldRef.current?.announce(`${name} and ${call.name} are talking.`);
+                    setCall({ ...call, phase: "live" });
+                    setToast("You're talking. Voice only.");
+                  })();
+                }}
+              >
+                Listen
+              </button>
+              <button
+                type="button"
+                className="vibe-btn"
+                onClick={() => {
+                  p2p.send({ k: "call-no" }, call.id);
+                  setCall(null);
+                  setToast("You let it pass.");
+                }}
+              >
+                Not now
+              </button>
+            </div>
+          </article>
+        ) : null}
         <div className="vibe-actions">
           <button type="button" className="vibe-btn" onClick={() => {
             worldRef.current?.doWave();
@@ -492,6 +572,38 @@ function Village({
             if (near) p2p.send({ k: "offer", n: name }, near.id);
           }}>
             <Gift className="size-4" aria-hidden="true" /> Share
+          </button>
+          <button
+            type="button"
+            className="vibe-btn"
+            data-on={call?.phase === "live" || call?.phase === "out"}
+            onClick={() => {
+              if (call && call.phase !== "in") {
+                p2p.send({ k: "call-end" }, call.id);
+                p2p.endVoice();
+                worldRef.current?.setTalking(call.id, false);
+                worldRef.current?.announce(`${name} lets the talk rest.`);
+                setCall(null);
+                setToast("The talk rests.");
+                return;
+              }
+              const near = worldRef.current?.nearestRemote(8);
+              if (!near) {
+                setToast("Walk over to someone with a green dot.");
+                return;
+              }
+              const ready = p2p.peers.some((p) => p.id === near.id && p.connectionState === "connected");
+              if (!ready) {
+                setToast(`${near.name} is still on the way.`);
+                return;
+              }
+              p2p.send({ k: "call", n: name }, near.id);
+              worldRef.current?.announce(`${name} asks ${near.name} to talk.`);
+              setCall({ id: near.id, name: near.name, phase: "out" });
+              setToast(`Asking ${near.name}…`);
+            }}
+          >
+            <Phone className="size-4" aria-hidden="true" /> {call?.phase === "live" ? "Hang up" : call?.phase === "out" ? "Calling" : "Talk"}
           </button>
         </div>
         <form
