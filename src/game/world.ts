@@ -69,7 +69,7 @@ type Wanderer = {
   tz: number;
   speed: number;
   phase: number;
-  kind: "person" | "cow" | "dog" | "hen";
+  kind: "person" | "cow" | "dog" | "hen" | "rabbit" | "sheep" | "butterfly";
   name?: string;
   lines?: string[];
   line: number;
@@ -424,7 +424,7 @@ const VILLAGERS: { name: string; color: number; skin: number; x: number; z: numb
 export class VillageWorld {
   readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera = new THREE.PerspectiveCamera(60, 1, 0.1, 240);
+  private readonly camera = new THREE.PerspectiveCamera(60, 1, 0.1, 480);
   private readonly timer = new THREE.Timer();
   private readonly hooks: WorldHooks;
   private readonly colliders: Collider[] = [];
@@ -440,8 +440,16 @@ export class VillageWorld {
   private readonly look = new THREE.Vector3();
   private readonly resolved = { x: 0, z: 0 };
   private qaKeys: Set<string> | null = null;
+  private camYaw = 0;
+  private camPitch = 0.56;
+  private lookDrag = 0;
   private joyX = 0;
   private joyY = 0;
+  private readonly lilies: THREE.Object3D[] = [];
+  private readonly birds: { mesh: THREE.Group; a: number; r: number; y: number; s: number }[] = [];
+  private cloudMesh: THREE.InstancedMesh | null = null;
+  private readonly cloudData: { x: number; y: number; z: number; s: number }[] = [];
+  private readonly spin = new THREE.Object3D();
   private raf = 0;
   private dead = false;
   private elapsed = 0;
@@ -518,15 +526,15 @@ export class VillageWorld {
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
-    this.renderer.setClearColor(0x8ebfe0, 1);
+    this.renderer.setClearColor(0xf4e6cf, 1);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    this.scene.background = new THREE.Color(0x8ebfe0);
-    this.scene.fog = new THREE.Fog(0xc5d4c0, 58, 145);
+    this.scene.background = null;
+    this.scene.fog = new THREE.Fog(0xf4e6cf, 62, 230);
     this.scene.add(new THREE.AmbientLight(0xfff4e8, 0.55));
     this.scene.add(new THREE.HemisphereLight(0xffe6c4, 0x3e7a3a, 0.72));
     const sun = new THREE.DirectionalLight(0xfff1dd, 2.5);
@@ -541,6 +549,7 @@ export class VillageWorld {
     sun.shadow.camera.bottom = -48;
     sun.shadow.bias = -0.00035;
     this.scene.add(sun);
+    this.addSky();
 
     this.waterTime = { value: 0 };
     this.leafTime = { value: 0 };
@@ -621,7 +630,7 @@ export class VillageWorld {
     });
 
     this.emitStatus();
-    this.hooks.onToast("The garden is west. Tap once and the trees keep a quiet flute.");
+    this.hooks.onToast("Drag the open grass to look around. The garden is west.");
     const loop = () => {
       if (this.dead) return;
       this.raf = requestAnimationFrame(loop);
@@ -669,6 +678,16 @@ export class VillageWorld {
   setJoy(x: number, y: number) {
     this.joyX = x;
     this.joyY = y;
+  }
+
+  beginLook() {
+    this.lookDrag = 0;
+  }
+
+  orbit(dx: number, dy: number) {
+    this.lookDrag += Math.abs(dx) + Math.abs(dy);
+    this.camYaw -= dx * 0.0052;
+    this.camPitch = Math.min(1.12, Math.max(0.18, this.camPitch + dy * 0.0034));
   }
 
   getPose(): PoseMsg {
@@ -1107,6 +1126,10 @@ export class VillageWorld {
   }
 
   private pick(e: MouseEvent) {
+    if (this.lookDrag > 10) {
+      this.lookDrag = 0;
+      return;
+    }
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -1179,12 +1202,18 @@ export class VillageWorld {
     this.leafTime.value = this.elapsed;
 
     const keys = this.qaKeys ?? this.keys;
-    let ix = this.joyX;
-    let iz = -this.joyY;
-    if (keys.has("KeyW") || keys.has("ArrowUp")) iz -= 1;
-    if (keys.has("KeyS") || keys.has("ArrowDown")) iz += 1;
-    if (keys.has("KeyA") || keys.has("ArrowLeft")) ix -= 1;
-    if (keys.has("KeyD") || keys.has("ArrowRight")) ix += 1;
+    let sx = this.joyX;
+    let sz = this.joyY;
+    if (keys.has("KeyW") || keys.has("ArrowUp")) sz += 1;
+    if (keys.has("KeyS") || keys.has("ArrowDown")) sz -= 1;
+    if (keys.has("KeyA") || keys.has("ArrowLeft")) sx -= 1;
+    if (keys.has("KeyD") || keys.has("ArrowRight")) sx += 1;
+    const forwardX = -Math.sin(this.camYaw);
+    const forwardZ = -Math.cos(this.camYaw);
+    const rightX = Math.cos(this.camYaw);
+    const rightZ = -Math.sin(this.camYaw);
+    const ix = rightX * sx + forwardX * sz;
+    const iz = rightZ * sx + forwardZ * sz;
     const mag = Math.hypot(ix, iz);
     const movingInput = mag > 0.08;
     if (movingInput && (this.mode === "sit" || this.mode === "quiet")) {
@@ -1217,7 +1246,7 @@ export class VillageWorld {
     const swimming = pondD < this.pond.r - 0.35;
     if (swimming && !this.swimming) this.feed(`${this.name} just jumped in the pond for a swim.`, true);
     this.swimming = swimming;
-    this.player.position.set(this.px, swimming ? -0.22 + Math.sin(this.elapsed * 3.2) * 0.05 : 0, this.pz);
+    this.player.position.set(this.px, swimming ? -0.06 + Math.sin(this.elapsed * 2.2) * 0.025 : 0, this.pz);
     this.player.rotation.y = this.facing;
     animateAvatar(this.player, action, this.elapsed);
 
@@ -1234,12 +1263,20 @@ export class VillageWorld {
     this.stepRemotes(dt);
     this.stepFire();
     this.stepFlies();
+    this.stepBirds(dt);
+    this.stepClouds();
+    this.stepLilies();
     this.syncCrops();
     this.refreshNearby();
 
-    const dist = this.aspect < 0.9 ? 15.5 : 12.2;
-    const height = this.aspect < 0.9 ? 10.2 : 7.4;
-    this.camTarget.set(this.px, height, this.pz + dist);
+    const dist = (this.aspect < 0.9 ? 16.4 : 13) ;
+    const horiz = Math.cos(this.camPitch) * dist;
+    const height = 1.35 + Math.sin(this.camPitch) * dist;
+    this.camTarget.set(
+      this.px + Math.sin(this.camYaw) * horiz,
+      height,
+      this.pz + Math.cos(this.camYaw) * horiz,
+    );
     const k = 1 - Math.exp(-dt * 4);
     this.camera.position.lerp(this.camTarget, k);
     this.look.set(this.px, 1.25, this.pz);
@@ -1345,13 +1382,16 @@ export class VillageWorld {
       let dz = a.tz - a.z;
       const len = Math.hypot(dx, dz);
       if (len < 0.7) {
-        const home = a.kind === "hen" ? 6 : a.kind === "dog" ? 18 : 10;
+        const home = a.kind === "hen" || a.kind === "rabbit" ? 7 : a.kind === "butterfly" ? 16 : a.kind === "dog" ? 18 : 12;
         a.tx = a.x + (Math.random() - 0.5) * home;
         a.tz = a.z + (Math.random() - 0.5) * home;
         if (a.kind === "hen") {
           a.tx = Math.max(-36, Math.min(-16, a.tx));
           a.tz = Math.max(-16, Math.min(2, a.tz));
-        } else {
+        } else if (a.kind === "rabbit") {
+          a.tx = Math.max(-8, Math.min(14, a.tx));
+          a.tz = Math.max(-4, Math.min(16, a.tz));
+        } else if (a.kind !== "butterfly") {
           a.tx = Math.max(-48, Math.min(48, a.tx));
           a.tz = Math.max(-48, Math.min(48, a.tz));
         }
@@ -1377,6 +1417,15 @@ export class VillageWorld {
         a.group.rotation.x = Math.sin(this.elapsed * 7 + a.phase) > 0.65 ? 0.45 : 0;
       } else if (a.kind === "dog") {
         a.group.position.y = Math.abs(Math.sin(this.elapsed * 10 + a.phase)) * 0.05;
+      } else if (a.kind === "rabbit") {
+        a.group.position.y = Math.abs(Math.sin(this.elapsed * 12 + a.phase)) * 0.16;
+      } else if (a.kind === "butterfly") {
+        a.group.position.y = 1.15 + Math.sin(this.elapsed * 2.2 + a.phase) * 0.45;
+        const flap = Math.sin(this.elapsed * 14 + a.phase) * 0.8;
+        const left = a.group.children[0] as THREE.Mesh | undefined;
+        const right = a.group.children[1] as THREE.Mesh | undefined;
+        if (left) left.rotation.y = 0.4 + flap;
+        if (right) right.rotation.y = -0.4 - flap;
       }
     }
   }
@@ -1426,6 +1475,74 @@ export class VillageWorld {
     if (points) {
       (points.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
     }
+  }
+
+  private addSky() {
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(340, 28, 18),
+      new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        depthWrite: false,
+        fog: false,
+        vertexShader: `
+          varying vec3 vDir;
+          void main() {
+            vDir = position;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vDir;
+          void main() {
+            float h = normalize(vDir).y;
+            vec3 zenith = vec3(0.55, 0.74, 0.93);
+            vec3 mid = vec3(0.78, 0.88, 0.96);
+            vec3 horizon = vec3(0.99, 0.90, 0.76);
+            vec3 col = mix(horizon, mid, smoothstep(-0.02, 0.22, h));
+            col = mix(col, zenith, smoothstep(0.18, 0.82, h));
+            gl_FragColor = vec4(col, 1.0);
+          }
+        `,
+      }),
+    );
+    this.scene.add(sky);
+  }
+
+  private stepLilies() {
+    for (const lily of this.lilies) {
+      lily.position.y = 0.16 + Math.sin(this.elapsed * 0.7 + lily.position.x * 0.6) * 0.018;
+    }
+  }
+
+  private stepBirds(dt: number) {
+    for (const b of this.birds) {
+      b.a += dt * b.s;
+      const x = Math.cos(b.a) * b.r + Math.sin(b.a * 2.0) * 4;
+      const z = Math.sin(b.a * 0.9) * b.r * 0.78;
+      b.mesh.position.set(x, b.y + Math.sin(b.a * 2.4) * 0.7, z);
+      b.mesh.rotation.y = -b.a;
+      const flap = Math.sin(this.elapsed * 8 + b.a * 4) * 0.75;
+      const wingL = b.mesh.children[1] as THREE.Mesh;
+      const wingR = b.mesh.children[2] as THREE.Mesh;
+      if (wingL) wingL.rotation.z = flap;
+      if (wingR) wingR.rotation.z = -flap;
+    }
+  }
+
+  private stepClouds() {
+    const mesh = this.cloudMesh;
+    if (!mesh) return;
+    const dummy = this.spin;
+    for (let i = 0; i < this.cloudData.length; i += 1) {
+      const c = this.cloudData[i];
+      const x = c.x + Math.sin(this.elapsed * 0.025 + i) * 6;
+      dummy.position.set(x, c.y, c.z + Math.cos(this.elapsed * 0.02 + i) * 3);
+      dummy.scale.set(c.s, c.s * 0.38, c.s * 0.72);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
   }
 
   private addCollider(x: number, z: number, r: number) {
@@ -1547,52 +1664,66 @@ export class VillageWorld {
     this.addMarket();
     this.addFarm();
     this.addScatter(rng);
+    this.addHorizon();
+    this.addClouds();
+    this.addBirds();
     this.addPeople();
     this.addCritters();
     this.addFlies();
   }
 
   private addPond() {
-    const waterMat = new THREE.ShaderMaterial({
+    const water = new THREE.Mesh(new THREE.CircleGeometry(7.7, 64), new THREE.ShaderMaterial({
       transparent: true,
-      depthWrite: false,
+      depthWrite: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
       uniforms: {
         uTime: this.waterTime,
-        uShallow: { value: new THREE.Color(0x6ec4d4) },
-        uDeep: { value: new THREE.Color(0x1f6f86) },
+        uShallow: { value: new THREE.Color(0x8fd0c8) },
+        uDeep: { value: new THREE.Color(0x2f7f92) },
       },
       vertexShader: `
         uniform float uTime;
-        varying vec2 vUv;
         varying float vWave;
+        varying vec3 vWorld;
         void main() {
-          vUv = uv;
           vec3 p = position;
-          float w = sin(position.x * 1.4 + uTime * 1.3) * 0.07 + cos(position.y * 1.2 + uTime) * 0.05;
+          float w = sin(position.x * 0.55 + uTime * 0.55) * 0.035
+                  + cos(position.y * 0.48 + uTime * 0.42) * 0.028;
           p.z += w;
           vWave = w;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+          vec4 world = modelMatrix * vec4(p, 1.0);
+          vWorld = world.xyz;
+          gl_Position = projectionMatrix * viewMatrix * world;
         }
       `,
       fragmentShader: `
         uniform vec3 uShallow;
         uniform vec3 uDeep;
-        varying vec2 vUv;
+        uniform float uTime;
         varying float vWave;
+        varying vec3 vWorld;
         void main() {
-          float fres = smoothstep(0.1, 0.95, length(vUv - 0.5) * 2.0);
-          vec3 col = mix(uShallow, uDeep, fres) + vWave;
-          gl_FragColor = vec4(col, 0.9);
+          vec3 viewDir = normalize(cameraPosition - vWorld);
+          float facing = clamp(viewDir.y, 0.0, 1.0);
+          float fres = pow(1.0 - facing, 1.6);
+          float rip = 0.5 + 0.5 * sin(vWorld.x * 0.55 + uTime * 0.6) * cos(vWorld.z * 0.42 - uTime * 0.45);
+          vec3 col = mix(uDeep, uShallow, 0.25 + rip * 0.35);
+          col += vec3(0.85, 0.95, 0.9) * fres * 0.28;
+          col += vec3(1.0, 0.96, 0.86) * smoothstep(0.78, 1.0, rip) * 0.12;
+          gl_FragColor = vec4(col, 0.92);
         }
       `,
-    });
-    const water = new THREE.Mesh(new THREE.CircleGeometry(8, 40), waterMat);
+    }));
     water.rotation.x = -Math.PI / 2;
-    water.position.set(this.pond.x, 0.06, this.pond.z);
+    water.position.set(this.pond.x, 0.12, this.pond.z);
+    water.renderOrder = 2;
     this.scene.add(water);
     const shore = new THREE.Mesh(
-      new THREE.RingGeometry(8.05, 10.1, 40),
-      new THREE.MeshStandardMaterial({ color: 0xe6d2a8, roughness: 1 }),
+      new THREE.RingGeometry(7.85, 10.4, 48),
+      new THREE.MeshStandardMaterial({ color: 0xe7d7b4, roughness: 1 }),
     );
     shore.rotation.x = -Math.PI / 2;
     shore.position.set(this.pond.x, 0.03, this.pond.z);
@@ -1628,12 +1759,13 @@ export class VillageWorld {
     pads.forEach(([x, z], i) => {
       const padMesh = new THREE.Mesh(new THREE.CircleGeometry(0.48, 10), lilyMat);
       padMesh.rotation.x = -Math.PI / 2;
-      padMesh.position.set(x, 0.1, z);
+      padMesh.position.set(x, 0.16, z);
       this.scene.add(padMesh);
+      this.lilies.push(padMesh);
       if (i % 2 === 0) {
         const bloom = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), bloomMat);
-        bloom.position.set(x, 0.2, z);
-        this.scene.add(bloom);
+        bloom.position.set(0, 0, 0.08);
+        padMesh.add(bloom);
       }
     });
 
@@ -1781,19 +1913,19 @@ export class VillageWorld {
     const yolk = new THREE.MeshStandardMaterial({ color: 0xffd56a, roughness: 0.45 });
     const kinds = [greens, tomato, wheat, petal];
     let id = 0;
-    for (let row = 0; row < 4; row += 1) {
-      for (let col = 0; col < 4; col += 1) {
-        const x = -33 + col * 3.1;
-        const z = -14 + row * 3.1;
+    for (let row = 0; row < 5; row += 1) {
+      for (let col = 0; col < 5; col += 1) {
+        const x = -34.2 + col * 2.55;
+        const z = -15.2 + row * 2.55;
         const soil = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.12, 2.2), soilMat);
         soil.position.set(x, 0.06, z);
         soil.receiveShadow = true;
         this.scene.add(soil);
         const group = new THREE.Group();
-        const kind = (row + col) % 4;
+        const kind = (row + col) % 5;
         if (kind === 0) {
-          const cone = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1.05, 6), kinds[0]);
-          cone.position.y = 0.62;
+          const cone = new THREE.Mesh(new THREE.ConeGeometry(0.38, 0.95, 6), kinds[0]);
+          cone.position.y = 0.58;
           cone.castShadow = true;
           group.add(cone);
         } else if (kind === 1) {
@@ -1806,11 +1938,11 @@ export class VillageWorld {
           group.add(ball);
         } else if (kind === 2) {
           for (let s = 0; s < 3; s += 1) {
-            const ear = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.9, 5), kinds[2]);
-            ear.position.set((s - 1) * 0.18, 0.55, 0);
+            const ear = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.85, 5), kinds[2]);
+            ear.position.set((s - 1) * 0.16, 0.52, 0);
             group.add(ear);
           }
-        } else {
+        } else if (kind === 3) {
           const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.5, 5), stem);
           stalk.position.y = 0.32;
           group.add(stalk);
@@ -1820,6 +1952,11 @@ export class VillageWorld {
           const center = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), yolk);
           center.position.set(0, 0.72, 0.12);
           group.add(center);
+        } else {
+          const gourd = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 6), new THREE.MeshStandardMaterial({ color: 0xe07a2f, roughness: 0.7 }));
+          gourd.scale.y = 0.72;
+          gourd.position.y = 0.28;
+          group.add(gourd);
         }
         group.position.set(x, 0, z);
         group.userData.kind = "crop";
@@ -1830,10 +1967,10 @@ export class VillageWorld {
       }
     }
 
-    const x0 = -35.2;
-    const x1 = -23.6;
-    const z0 = -16.2;
-    const z1 = -2.6;
+    const x0 = -36.2;
+    const x1 = -23.2;
+    const z0 = -17.2;
+    const z1 = -4.2;
     const rail = (x: number, z: number, w: number, l: number, y: number) => {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, 0.08, l), fenceMat);
       mesh.position.set(x, y, z);
@@ -1860,7 +1997,7 @@ export class VillageWorld {
   private blocked(x: number, z: number) {
     if (x * x + z * z < 16 * 16) return true;
     if (Math.hypot(x - 20, z + 10) < 13) return true;
-    if (x > -38 && x < -16 && z > -18 && z < 4) return true;
+    if (x > -40 && x < -20 && z > -20 && z < 2) return true;
     if (Math.hypot(x + 16, z - 12) < 6) return true;
     if (Math.hypot(x - 15, z - 15) < 6) return true;
     if (Math.hypot(x + 10, z + 22) < 6) return true;
@@ -1896,7 +2033,7 @@ export class VillageWorld {
       { x: 17.5, z: 16, s: 0.8, fruit: true },
     ];
     let guard = 0;
-    while (spots.length < 62 && guard < 800) {
+    while (spots.length < 84 && guard < 900) {
       guard += 1;
       const ang = rng() * Math.PI * 2;
       const rad = 28 + rng() * 24;
@@ -1945,10 +2082,10 @@ export class VillageWorld {
     this.scene.add(trunks, leaves, fruit);
 
     const bushMat = new THREE.MeshStandardMaterial({ color: 0x2f7a3c, roughness: 0.9 });
-    const bushes = new THREE.InstancedMesh(new THREE.SphereGeometry(0.55, 6, 5), bushMat, 36);
+    const bushes = new THREE.InstancedMesh(new THREE.SphereGeometry(0.55, 6, 5), bushMat, 58);
     let b = 0;
     let tries = 0;
-    while (b < 36 && tries < 400) {
+    while (b < 58 && tries < 500) {
       tries += 1;
       const x = (rng() - 0.5) * 90;
       const z = (rng() - 0.5) * 90;
@@ -1968,9 +2105,9 @@ export class VillageWorld {
     const flowers = new THREE.InstancedMesh(
       new THREE.SphereGeometry(0.12, 6, 5),
       new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55 }),
-      80,
+      140,
     );
-    for (let i = 0; i < 80; i += 1) {
+    for (let i = 0; i < 140; i += 1) {
       const ang = rng() * Math.PI * 2;
       const rad = 9 + rng() * 40;
       const x = Math.cos(ang) * rad;
@@ -1998,6 +2135,32 @@ export class VillageWorld {
       rocks.setMatrixAt(i, dummy.matrix);
     }
     this.scene.add(rocks);
+
+    const tuftMat = new THREE.MeshStandardMaterial({ color: 0x6eae62, roughness: 0.9 });
+    const tufts = new THREE.InstancedMesh(new THREE.ConeGeometry(0.16, 0.55, 4), tuftMat, 70);
+    for (let i = 0; i < 70; i += 1) {
+      const ang = rng() * Math.PI * 2;
+      const rad = 6 + rng() * 36;
+      dummy.position.set(Math.cos(ang) * rad, 0.22, Math.sin(ang) * rad);
+      dummy.scale.setScalar(0.7 + rng() * 0.8);
+      dummy.rotation.set(0, rng() * 3, 0);
+      dummy.updateMatrix();
+      tufts.setMatrixAt(i, dummy.matrix);
+    }
+    this.scene.add(tufts);
+
+    const capMat = new THREE.MeshStandardMaterial({ color: 0xc4554a, roughness: 0.7 });
+    const caps = new THREE.InstancedMesh(new THREE.SphereGeometry(0.16, 6, 5), capMat, 18);
+    for (let i = 0; i < 18; i += 1) {
+      const ang = rng() * Math.PI * 2;
+      const rad = 10 + rng() * 22;
+      dummy.position.set(Math.cos(ang) * rad, 0.12, Math.sin(ang) * rad);
+      dummy.scale.set(1, 0.55, 1);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      caps.setMatrixAt(i, dummy.matrix);
+    }
+    this.scene.add(caps);
   }
 
   private addPeople() {
@@ -2039,6 +2202,41 @@ export class VillageWorld {
         beak.rotation.x = Math.PI / 2;
         beak.position.set(0, 0.3, 0.26);
         group.add(beak);
+      } else if (kind === "rabbit") {
+        const body = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), mat);
+        body.scale.set(1, 0.85, 1.35);
+        body.position.y = 0.2;
+        group.add(body);
+        const earMat = new THREE.MeshStandardMaterial({ color: 0xf3c7c2, roughness: 0.7 });
+        [-0.05, 0.05].forEach((dx) => {
+          const ear = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.22, 4), earMat);
+          ear.position.set(dx, 0.4, 0.02);
+          group.add(ear);
+        });
+      } else if (kind === "butterfly") {
+        const wing = new THREE.MeshStandardMaterial({
+          color,
+          roughness: 0.45,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.92,
+        });
+        const left = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.16), wing);
+        left.position.x = -0.1;
+        const right = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.16), wing);
+        right.position.x = 0.1;
+        group.add(left, right);
+      } else if (kind === "sheep") {
+        const wool = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 6), mat);
+        wool.position.y = 0.46;
+        wool.castShadow = true;
+        group.add(wool);
+        const head = new THREE.Mesh(
+          new THREE.SphereGeometry(0.16, 8, 6),
+          new THREE.MeshStandardMaterial({ color: 0x2c241c, roughness: 0.8 }),
+        );
+        head.position.set(0, 0.48, 0.38);
+        group.add(head);
       } else {
         const body = new THREE.Mesh(new THREE.BoxGeometry(kind === "dog" ? 0.45 : 0.85, kind === "dog" ? 0.32 : 0.5, kind === "dog" ? 0.8 : 1.3), mat);
         body.position.y = kind === "dog" ? 0.36 : 0.55;
@@ -2071,6 +2269,13 @@ export class VillageWorld {
     add("hen", -28, -4, 0xf4efe6, 1.3);
     add("hen", -24, -12, 0xd9a441, 1.4);
     add("hen", -30, -9, 0xf2efe9, 1.2);
+    add("hen", -22, -6, 0xf7f1e4, 1.25);
+    add("rabbit", 5, 5, 0xf4efe8, 2.4);
+    add("rabbit", -2, 9, 0xe7d5c4, 2.2);
+    add("sheep", 12, 26, 0xf7f4ee, 0.7);
+    add("butterfly", 2, -3, 0xf2b6c6, 1.5);
+    add("butterfly", 8, 2, 0xffd56a, 1.35);
+    add("butterfly", -6, 4, 0xd7e4f2, 1.6);
   }
 
   private addFlies() {
@@ -2097,5 +2302,83 @@ export class VillageWorld {
     );
     pts.name = "flies";
     this.scene.add(pts);
+  }
+
+  private addHorizon() {
+    const far = new THREE.Mesh(
+      new THREE.CircleGeometry(210, 48),
+      new THREE.MeshStandardMaterial({ color: 0xd5e2c8, roughness: 1 }),
+    );
+    far.rotation.x = -Math.PI / 2;
+    far.position.y = -0.55;
+    this.scene.add(far);
+    const stone = new THREE.MeshStandardMaterial({ color: 0x9aafc0, roughness: 1 });
+    const snow = new THREE.MeshStandardMaterial({ color: 0xf7f4ef, roughness: 0.9 });
+    for (let i = 0; i < 18; i += 1) {
+      const a = (i / 18) * Math.PI * 2 + 0.2;
+      const rad = 118 + (i % 4) * 10;
+      const h = 22 + (i % 5) * 8;
+      const peak = new THREE.Mesh(new THREE.ConeGeometry(14 + (i % 3) * 7, h, 6), stone);
+      peak.position.set(Math.cos(a) * rad, h * 0.28 - 6, Math.sin(a) * rad);
+      this.scene.add(peak);
+      if (i % 2 === 0) {
+        const cap = new THREE.Mesh(new THREE.ConeGeometry(5.5, h * 0.26, 5), snow);
+        cap.position.set(peak.position.x, peak.position.y + h * 0.36, peak.position.z);
+        this.scene.add(cap);
+      }
+    }
+  }
+
+  private addClouds() {
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xfffaf7,
+      roughness: 1,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    });
+    const mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 8, 6), mat, 9);
+    const dummy = this.spin;
+    for (let i = 0; i < 9; i += 1) {
+      const a = (i / 9) * Math.PI * 2;
+      const data = {
+        x: Math.cos(a) * (26 + (i % 4) * 9),
+        y: 24 + (i % 3) * 5,
+        z: Math.sin(a) * (22 + (i % 3) * 8),
+        s: 5 + (i % 3) * 2.2,
+      };
+      this.cloudData.push(data);
+      dummy.position.set(data.x, data.y, data.z);
+      dummy.scale.set(data.s, data.s * 0.38, data.s * 0.72);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    this.cloudMesh = mesh;
+    this.scene.add(mesh);
+  }
+
+  private addBirds() {
+    const colors = [0xf7f4ee, 0xd5e4ee, 0xf3e2c0];
+    for (let i = 0; i < 6; i += 1) {
+      const mesh = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({ color: colors[i % colors.length], roughness: 0.55, side: THREE.DoubleSide });
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.11, 6, 5), mat);
+      body.scale.set(0.7, 0.5, 1.5);
+      mesh.add(body);
+      const wingL = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.12), mat);
+      wingL.position.x = -0.2;
+      const wingR = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.12), mat);
+      wingR.position.x = 0.2;
+      mesh.add(wingL, wingR);
+      this.scene.add(mesh);
+      this.birds.push({
+        mesh,
+        a: (i / 6) * Math.PI * 2,
+        r: 16 + (i % 3) * 7,
+        y: 11 + (i % 4) * 1.7,
+        s: 0.12 + (i % 3) * 0.04,
+      });
+    }
   }
 }

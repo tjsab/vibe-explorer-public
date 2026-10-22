@@ -264,6 +264,45 @@ function Village({
   }, []);
 
   useEffect(() => {
+    let dragging = false;
+    let pointer = -1;
+    let lx = 0;
+    let ly = 0;
+    const blocked = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      return !!el?.closest?.("button, input, textarea, a, summary, .vibe-joy, .vibe-hud, .vibe-dock, .vibe-peek, .vibe-topback");
+    };
+    const down = (e: PointerEvent) => {
+      if (e.button !== 0 || blocked(e.target)) return;
+      dragging = true;
+      pointer = e.pointerId;
+      lx = e.clientX;
+      ly = e.clientY;
+      worldRef.current?.beginLook();
+    };
+    const move = (e: PointerEvent) => {
+      if (!dragging || e.pointerId !== pointer) return;
+      worldRef.current?.orbit(e.clientX - lx, e.clientY - ly);
+      lx = e.clientX;
+      ly = e.clientY;
+    };
+    const up = (e: PointerEvent) => {
+      if (e.pointerId !== pointer) return;
+      dragging = false;
+    };
+    window.addEventListener("pointerdown", down);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    return () => {
+      window.removeEventListener("pointerdown", down);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!toast) return;
     const id = window.setTimeout(() => setToast(""), 4200);
     return () => window.clearTimeout(id);
