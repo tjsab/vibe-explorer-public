@@ -24,7 +24,10 @@ type Reliable =
   | { k: "harvest"; id: number; until: number }
   | { k: "hi"; n: string }
   | { k: "offer"; n: string }
-  | { k: "snapshot"; crops: CropSnap[] };
+  | { k: "snapshot"; crops: CropSnap[] }
+  | { k: "feed"; text: string };
+
+type FeedItem = { id: number; text: string };
 
 function readRoom() {
   const raw = new URLSearchParams(window.location.search).get("room") ?? "village";
@@ -43,6 +46,14 @@ function readName() {
 function readClean() {
   try {
     return localStorage.getItem("vibe-clean") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function readTopHidden() {
+  try {
+    return localStorage.getItem("vibe-top") === "0";
   } catch {
     return false;
   }
@@ -92,6 +103,7 @@ function Village({
     onToast: () => undefined,
     onStatus: () => undefined,
     onHarvest: () => undefined,
+    onFeed: () => undefined,
   });
   const [toast, setToast] = useState("Welcome to the meadow.");
   const [talk, setTalk] = useState<Talk | null>(null);
@@ -106,6 +118,9 @@ function Village({
   const [roomDraft, setRoomDraft] = useState(room);
   const [copied, setCopied] = useState(false);
   const [clean, setClean] = useState(readClean);
+  const [topHidden, setTopHidden] = useState(readTopHidden);
+  const [feed, setFeed] = useState<FeedItem[]>([]);
+  const feedId = useRef(1);
   const seen = useRef(new Set<string>());
   const joyRef = useRef<HTMLDivElement>(null);
   const knobRef = useRef<HTMLDivElement>(null);
@@ -114,6 +129,19 @@ function Village({
   hooks.current.onToast = (msg) => setToast(msg);
   hooks.current.onStatus = (next) => setStatus(next);
   hooks.current.onHarvest = (id, until) => p2p.send({ k: "harvest", id, until });
+  hooks.current.onFeed = (line, share) => {
+    pushFeed(line);
+    if (share) p2p.send({ k: "feed", text: line });
+  };
+
+  function pushFeed(text: string) {
+    const clean = text.replace(/\s+/g, " ").trim().slice(0, 140);
+    if (!clean) return;
+    setFeed((prev) => {
+      if (prev[0]?.text === clean) return prev;
+      return [{ id: feedId.current++, text: clean }, ...prev].slice(0, 8);
+    });
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -142,6 +170,8 @@ function Village({
         world.applyHarvest(msg.id, msg.until);
       } else if (msg.k === "snapshot" && Array.isArray(msg.crops)) {
         world.applySnapshot(msg.crops);
+      } else if (msg.k === "feed" && typeof msg.text === "string") {
+        pushFeed(msg.text);
       } else if (msg.k === "hi" && typeof msg.n === "string") {
         world.pulseHello(from);
         setToast(`${asAnon(msg.n, from)} waves hello.`);
@@ -270,6 +300,18 @@ function Village({
     });
   };
 
+  const toggleTop = () => {
+    setTopHidden((value) => {
+      const next = !value;
+      try {
+        localStorage.setItem("vibe-top", next ? "0" : "1");
+      } catch {
+        /* private mode */
+      }
+      return next;
+    });
+  };
+
   const copyLink = async () => {
     const url = new URL(window.location.href);
     if (room === "village") url.searchParams.delete("room");
@@ -291,7 +333,7 @@ function Village({
   };
 
   return (
-    <div className="vibe-stage" data-clean={clean ? "true" : "false"}>
+    <div className="vibe-stage" data-clean={clean ? "true" : "false"} data-top={topHidden ? "off" : "on"}>
       <canvas ref={canvasRef} className="vibe-canvas" />
       <button
         type="button"
@@ -304,48 +346,63 @@ function Village({
         {clean ? <Eye className="size-5" aria-hidden="true" /> : <EyeOff className="size-5" aria-hidden="true" />}
         {clean ? null : <span>Hide</span>}
       </button>
-      <header className="vibe-hud vibe-glass">
-        <p className="vibe-kicker">Shared meadow</p>
-        <h1>Vibe Explorer</h1>
-        <input
-          className="vibe-name"
-          aria-label="Your name"
-          defaultValue={name}
-          maxLength={24}
-          onBlur={(e) => onRename(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-          }}
-        />
-        <p className="vibe-presence">{presenceLine(p2p.joined, p2p.peers)}</p>
-        <div className="vibe-roomrow">
-          <span className="vibe-code">{p2p.joined ? "Live" : "Linking"} · {room}</span>
-          <button type="button" className="vibe-iconbtn" onClick={() => void copyLink()}>
-            <Link className="size-4" aria-hidden="true" />
-            {copied ? "Copied" : "Invite"}
-          </button>
-        </div>
-        <details className="vibe-more">
-          <summary>Private room</summary>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              commitRoom(roomDraft);
+      <div className="vibe-topcol">
+        <header className="vibe-hud vibe-glass">
+          <p className="vibe-kicker">Shared meadow</p>
+          <h1>Vibe Explorer</h1>
+          <input
+            className="vibe-name"
+            aria-label="Your name"
+            defaultValue={name}
+            maxLength={24}
+            onBlur={(e) => onRename(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}
-          >
-            <input
-              className="vibe-field"
-              aria-label="Room code"
-              value={roomDraft}
-              onChange={(e) => setRoomDraft(e.target.value)}
-              maxLength={24}
-            />
-            <button type="submit" className="vibe-iconbtn">
-              Join
+          />
+          <p className="vibe-presence">{presenceLine(p2p.joined, p2p.peers)}</p>
+          <div className="vibe-roomrow">
+            <span className="vibe-code">{p2p.joined ? "Live" : "Linking"} · {room}</span>
+            <button type="button" className="vibe-iconbtn" onClick={() => void copyLink()}>
+              <Link className="size-4" aria-hidden="true" />
+              {copied ? "Copied" : "Invite"}
             </button>
-          </form>
-        </details>
-      </header>
+          </div>
+          <details className="vibe-more">
+            <summary>Private room</summary>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                commitRoom(roomDraft);
+              }}
+            >
+              <input
+                className="vibe-field"
+                aria-label="Room code"
+                value={roomDraft}
+                onChange={(e) => setRoomDraft(e.target.value)}
+                maxLength={24}
+              />
+              <button type="submit" className="vibe-iconbtn">
+                Join
+              </button>
+            </form>
+          </details>
+          <button type="button" className="vibe-toplink" onClick={toggleTop}>
+            Hide top
+          </button>
+        </header>
+        {topHidden ? (
+          <button type="button" className="vibe-topback" onClick={toggleTop}>
+            Show top
+          </button>
+        ) : null}
+        <ol className="vibe-feed" aria-live="polite" aria-label="What the meadow is doing">
+          {feed.map((item) => (
+            <li key={item.id}>{item.text}</li>
+          ))}
+        </ol>
+      </div>
 
       <div className="vibe-dock">
         {talk ? (

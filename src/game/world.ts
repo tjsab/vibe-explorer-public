@@ -27,6 +27,7 @@ export type WorldHooks = {
   onToast: (msg: string) => void;
   onStatus: (s: Status) => void;
   onHarvest: (id: number, until: number) => void;
+  onFeed: (line: string, share?: boolean) => void;
 };
 
 const ACTIONS: Action[] = ["idle", "walk", "dance", "sit", "quiet", "sing", "wave", "eat"];
@@ -453,6 +454,9 @@ export class VillageWorld {
   private emote: "dance" | "wave" | "eat" | null = null;
   private emoteUntil = 0;
   private food: number;
+  private swimming = false;
+  private nextVillagerNote = 3;
+  private lastFeed = "";
   private greetTimer = 0;
   private nearby = "";
   private lastStatus = "";
@@ -720,6 +724,7 @@ export class VillageWorld {
       };
       this.remotes.set(id, remote);
       this.hooks.onToast(`${remote.name} stepped into the meadow.`);
+      this.feed(`${remote.name} stepped into the meadow.`, false);
     }
     remote.tx = pose.x;
     remote.tz = pose.z;
@@ -761,6 +766,12 @@ export class VillageWorld {
     return best ? { id: best.id, name: best.name } : null;
   }
 
+  private feed(line: string, share = false) {
+    if (!line || line === this.lastFeed) return;
+    this.lastFeed = line;
+    this.hooks.onFeed(line, share);
+  }
+
   say(text: string) {
     showChat(this.player, text.slice(0, 80), this.elapsed + 4.8);
   }
@@ -777,12 +788,17 @@ export class VillageWorld {
     this.emoteUntil = this.elapsed + 1.6;
     this.greetTimer = 8;
     this.hooks.onToast("You wave across the meadow.");
+    this.feed(`${this.name} waves across the meadow.`, true);
   }
 
   doSing() {
     this.ensureAudio();
     this.mode = this.mode === "sing" ? null : "sing";
     this.hooks.onToast(this.mode === "sing" ? "A small tune, if you want it." : "The song rests. The trees keep going.");
+    this.feed(
+      this.mode === "sing" ? `${this.name} starts a song.` : `${this.name} lets the song rest.`,
+      true,
+    );
     this.emitStatus();
   }
 
@@ -790,6 +806,7 @@ export class VillageWorld {
     this.emote = "dance";
     this.emoteUntil = this.elapsed + 2.6;
     this.hooks.onToast("You dance. Badly is allowed.");
+    this.feed(`${this.name} dances in the grass.`, true);
   }
 
   doQuiet() {
@@ -799,6 +816,7 @@ export class VillageWorld {
       if (d > 0.4 && d < 16) this.facing = Math.atan2(-this.px, -this.pz);
     }
     this.hooks.onToast(this.mode === "quiet" ? "A quiet minute." : "You look up again.");
+    this.feed(this.mode === "quiet" ? `${this.name} takes a quiet minute.` : `${this.name} looks up again.`, true);
     this.emitStatus();
   }
 
@@ -806,6 +824,7 @@ export class VillageWorld {
     if (this.mode === "sit") {
       this.mode = null;
       this.hooks.onToast("You stand.");
+      this.feed(`${this.name} stands back up.`, true);
       this.emitStatus();
       return;
     }
@@ -822,6 +841,7 @@ export class VillageWorld {
       this.player.position.set(this.px, 0, this.pz);
     }
     this.hooks.onToast(best ? "You sit on a log." : "You sit where you are.");
+    this.feed(best ? `${this.name} sits by the fire.` : `${this.name} sits in the grass.`, true);
     this.emitStatus();
   }
 
@@ -835,6 +855,7 @@ export class VillageWorld {
     this.emote = "eat";
     this.emoteUntil = this.elapsed + 1.3;
     this.hooks.onToast("You eat. It's simple, and enough.");
+    this.feed(`${this.name} eats from the basket.`, true);
     this.emitStatus();
   }
 
@@ -853,6 +874,7 @@ export class VillageWorld {
     this.emote = "wave";
     this.emoteUntil = this.elapsed + 1.2;
     this.hooks.onToast(`You offer food to ${near.name}.`);
+    this.feed(`${this.name} shares food with ${near.name}.`, true);
     this.emitStatus();
     return near;
   }
@@ -875,9 +897,16 @@ export class VillageWorld {
       }
     }
     this.persistFood();
-    if (picked) this.hooks.onToast(picked === 1 ? "You pick from the garden." : `You pick ${picked} from the garden.`);
-    else if (tended) this.hooks.onToast(tended === 1 ? "You tend a sprout." : `You tend ${tended} sprouts.`);
-    else this.hooks.onToast("Nothing in reach. The plots are west of the path.");
+    if (picked) {
+      this.hooks.onToast(picked === 1 ? "You pick from the garden." : `You pick ${picked} from the garden.`);
+      this.feed(
+        `${this.name} just harvested ${picked} ${picked === 1 ? "crop" : "crops"}.`,
+        true,
+      );
+    } else if (tended) {
+      this.hooks.onToast(tended === 1 ? "You tend a sprout." : `You tend ${tended} sprouts.`);
+      this.feed(`${this.name} tends the sprouts.`, true);
+    } else this.hooks.onToast("Nothing in reach. The plots are west of the path.");
     this.emitStatus();
   }
 
@@ -1131,15 +1160,6 @@ export class VillageWorld {
           }
         }
       }
-      const pdx = x - this.pond.x;
-      const pdz = z - this.pond.z;
-      const pd = Math.hypot(pdx, pdz);
-      const minP = this.pond.r + radius;
-      if (pd < minP && pd > 0.0001) {
-        const push = (minP - pd) / pd;
-        x += pdx * push;
-        z += pdz * push;
-      }
     }
     this.resolved.x = Math.max(-WORLD, Math.min(WORLD, x));
     this.resolved.z = Math.max(-WORLD, Math.min(WORLD, z));
@@ -1172,12 +1192,14 @@ export class VillageWorld {
       this.emitStatus();
     }
     if (movingInput && (this.emote === "dance" || this.emote === "eat")) this.emote = null;
+    const inWater = Math.hypot(this.px - this.pond.x, this.pz - this.pond.z) < this.pond.r - 0.35;
     if (movingInput) {
       const clamped = Math.min(mag, 1);
       const nx = ix / mag;
       const nz = iz / mag;
-      const nx1 = this.px + nx * WALK_SPEED * clamped * dt;
-      const nz1 = this.pz + nz * WALK_SPEED * clamped * dt;
+      const pace = WALK_SPEED * (inWater ? 0.42 : 1);
+      const nx1 = this.px + nx * pace * clamped * dt;
+      const nz1 = this.pz + nz * pace * clamped * dt;
       this.resolve(nx1, nz1, 0.45);
       this.px = this.resolved.x;
       this.pz = this.resolved.z;
@@ -1191,7 +1213,11 @@ export class VillageWorld {
     this.yaw = Math.atan2(-fx, -fz);
 
     const action = this.currentAction(movingInput);
-    this.player.position.set(this.px, 0, this.pz);
+    const pondD = Math.hypot(this.px - this.pond.x, this.pz - this.pond.z);
+    const swimming = pondD < this.pond.r - 0.35;
+    if (swimming && !this.swimming) this.feed(`${this.name} just jumped in the pond for a swim.`, true);
+    this.swimming = swimming;
+    this.player.position.set(this.px, swimming ? -0.22 + Math.sin(this.elapsed * 3.2) * 0.05 : 0, this.pz);
     this.player.rotation.y = this.facing;
     animateAvatar(this.player, action, this.elapsed);
 
@@ -1203,6 +1229,7 @@ export class VillageWorld {
     this.fireLight.intensity = 14 + Math.sin(this.elapsed * 7) * 3;
 
     this.stepPeople(dt, gather);
+    this.noteVillagers();
     this.stepCritters(dt);
     this.stepRemotes(dt);
     this.stepFire();
@@ -1239,6 +1266,29 @@ export class VillageWorld {
       this.nearby = next;
       this.emitStatus();
     }
+  }
+
+  private noteVillagers() {
+    if (this.elapsed < this.nextVillagerNote || this.people.length === 0) return;
+    const p = this.people[Math.floor(Math.random() * this.people.length)];
+    if (!p?.name) return;
+    const pondD = Math.hypot(p.x - this.pond.x, p.z - this.pond.z);
+    const fireD = Math.hypot(p.x, p.z);
+    let line: string;
+    if (pondD < this.pond.r + 2.8) line = `${p.name} wades at the edge of the pond.`;
+    else if (p.x < -8 && p.z > -14 && p.z < 10) line = `${p.name} walks the garden rows.`;
+    else if (fireD < 7) line = `${p.name} sits near the fire.`;
+    else if (this.anyoneSinging()) line = `${p.name} comes over to the song.`;
+    else {
+      const bits = [
+        `${p.name} hums with the trees.`,
+        `${p.name} pauses on the path.`,
+        `${p.name} watches the light through the leaves.`,
+      ];
+      line = bits[Math.floor(this.elapsed * 3) % bits.length];
+    }
+    this.feed(line, false);
+    this.nextVillagerNote = this.elapsed + 8 + Math.random() * 7;
   }
 
   private syncCrops() {

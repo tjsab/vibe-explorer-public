@@ -75,17 +75,28 @@
   backdrop-filter: blur(14px);
 }
 
-.vibe-hud {
+.vibe-topcol {
   position: absolute;
   z-index: 3;
   top: calc(10px + env(safe-area-inset-top));
   left: max(10px, env(safe-area-inset-left));
   right: max(108px, calc(env(safe-area-inset-right) + 98px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.vibe-hud {
+  position: relative;
+  width: 100%;
   padding: 10px 14px;
   border-radius: 1.25rem;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  pointer-events: auto;
 }
 
 .vibe-kicker {
@@ -215,6 +226,68 @@
   outline-offset: 2px;
 }
 
+.vibe-stage[data-top="off"] .vibe-hud {
+  display: none;
+}
+
+.vibe-toplink,
+.vibe-topback {
+  border: 0;
+  background: transparent;
+  color: var(--color-sand);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0;
+  min-height: 32px;
+  pointer-events: auto;
+}
+
+.vibe-topback {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-sand) 42%, transparent);
+  background: color-mix(in srgb, var(--color-ink) 72%, transparent);
+  color: var(--color-cream);
+  backdrop-filter: blur(12px);
+}
+
+.vibe-feed {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  pointer-events: none;
+}
+
+.vibe-feed li {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--color-ink) 58%, transparent);
+  color: var(--color-cream);
+  font-size: 0.78rem;
+  line-height: 1.3;
+  backdrop-filter: blur(10px);
+}
+
+.vibe-feed li:nth-child(2) {
+  opacity: 0.78;
+}
+
+.vibe-feed li:nth-child(3) {
+  opacity: 0.55;
+}
+
+.vibe-feed li:nth-child(n + 4) {
+  display: none;
+}
+
+.vibe-stage[data-clean="true"] .vibe-topcol,
 .vibe-stage[data-clean="true"] .vibe-hud,
 .vibe-stage[data-clean="true"] .vibe-dock > :not(.vibe-talk) {
   opacity: 0;
@@ -403,9 +476,11 @@
 }
 
 @media (min-width: 900px) {
-  .vibe-hud {
+  .vibe-topcol {
     right: auto;
     width: 340px;
+  }
+  .vibe-hud {
     padding: 12px 14px 10px;
     gap: 4px;
   }
