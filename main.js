@@ -141,13 +141,13 @@ plotPositions.forEach(([x, z]) => addCropPlot(x, z));
 // NPCs / bots
 const npcs = [];
 const npcDialogues = [
-  "Namaste! Come join the kirtan later.",
+  "Hey, welcome. Come join us later for some singing.",
   "The crops are ready if you want to help harvest.",
-  "We gather for prayer at the mandapa every evening.",
+  "We gather at the circle every evening for a quiet moment together.",
   "Want to sing with us? Just press the Sing button.",
-  "Life is simple here. Grow, eat, share, remember the Divine.",
+  "Life is simple here. Grow, eat, share, be present.",
   "You can dance anytime. The ground is soft.",
-  "Hari bol! Welcome to the community."
+  "Welcome to the community. Grab some food when you're hungry."
 ];
 
 function createNPC(x, z, color) {
@@ -296,7 +296,7 @@ function updateNPCs() {
 
 // Action buttons
 window.sayHello = () => showMessage(`${anonName} greets the community.`);
-window.startSinging = () => showMessage(`${anonName} starts a kirtan. Others may join.`);
+window.startSinging = () => showMessage(`${anonName} starts singing. Others may join.`);
 window.dance = () => {
   showMessage(`${anonName} starts dancing.`);
   const startY = player.position.y;
@@ -309,7 +309,7 @@ window.dance = () => {
   };
   hop();
 };
-window.pray = () => showMessage(`${anonName} joins in prayer / Bhakti at the mandapa.`);
+window.pray = () => showMessage(`${anonName} joins in a quiet moment of prayer at the circle.`);
 
 function animate() {
   requestAnimationFrame(animate);
@@ -326,4 +326,4 @@ window.addEventListener('resize', () => {
 });
 
 showMessage('WASD to walk. Click crops to harvest. Click people to talk.');
-console.log('Vibe Explorer upgraded. Roam, harvest, talk to the bots.');
+console.log('Vibe Explorer. Roam, harvest, talk to the bots.');
