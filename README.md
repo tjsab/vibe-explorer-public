@@ -2,7 +2,7 @@
 
 A meadow you can walk. Everyone is an Anon number. Tap once for a quiet flute, press Sing for a tune, Hide top folds the name card. Hide clears the screen. A live note lists who harvested, swam, or sat down.
 
-Live: https://tjsab.github.io/vibe-explorer-public/?v=meadow-heaven
+Live: https://tjsab.github.io/vibe-explorer-public/?v=meadow-rooms
 
 The playable page at the repo root (`index.html` and `assets/`) is the built site. The source is in `src/`:
 
@@ -17,3 +17,5 @@ GitHub Pages cannot run the room server, so each visitor still gets their own me
 npm install
 npm run dev
 ```
+
+Same link, same meadow. The page stays on GitHub Pages. A small room relay in `signaling/` introduces people, then movement goes directly between browsers.

@@ -1,0 +1,9 @@
+{
+  "name": "vibe-rtc",
+  "main": "src/index.js",
+  "compatibility_date": "2026-01-15",
+  "durable_objects": {
+    "bindings": [{ "name": "RTC", "class_name": "RtcRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RtcRoom"] }]
+}

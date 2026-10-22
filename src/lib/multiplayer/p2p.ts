@@ -78,6 +78,14 @@ const FAST_POLL_MS = 400;
 const IDLE_POLL_MS = 2000;
 const PING_INTERVAL_MS = 2000;
 const STALL_MS = 10_000;
+
+/** Public room relay. GitHub Pages is static, so the meadow calls this. */
+export const PUBLIC_RTC_URL = "https://vibe-rtc.morning-myth-634.workers.dev/api/rtc";
+
+export function rtcBase(): string {
+  if (typeof location !== "undefined" && location.hostname.endsWith("github.io")) return PUBLIC_RTC_URL;
+  return "/api/rtc";
+}
 const MAX_RECOVERY_ATTEMPTS = 3;
 const SIGNAL_RETRY_DELAYS_MS = [250, 750];
 
@@ -139,7 +147,7 @@ export class P2PRoom {
     this.peers.clear();
     // Leaving the roster is the teardown broadcast: everyone's next poll
     // drops this peer and closes their side of the pair.
-    void fetch("/api/rtc", {
+    void fetch(rtcBase(), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ op: "leave", room: this.opts.room, peer: this.opts.selfId }),
@@ -193,7 +201,7 @@ export class P2PRoom {
       name: this.opts.name ?? "",
       since: String(this.cursor),
     });
-    const res = await fetch(`/api/rtc?${params}`);
+    const res = await fetch(`${rtcBase()}?${params}`);
     if (this.closed) return;
     if (!res.ok) throw new Error(`signaling poll failed: ${res.status}`);
     const body = (await res.json()) as RtcPollResponse;
@@ -221,10 +229,10 @@ export class P2PRoom {
       if (!this.everPolled && this.misses >= 2) {
         this.everPolled = true;
         this.opts.onConnected?.();
-        return;
       }
     }
-    this.schedulePoll(this.anyPairConnecting() ? FAST_POLL_MS : IDLE_POLL_MS);
+    const delay = this.misses > 2 ? 5000 : this.anyPairConnecting() ? FAST_POLL_MS : IDLE_POLL_MS;
+    this.schedulePoll(delay);
   }
 
   private reconcileRoster(peers: { id: string; name: string }[]): void {
@@ -455,7 +463,7 @@ export class P2PRoom {
     for (let attempt = 0; ; attempt++) {
       if (this.closed) return;
       try {
-        const res = await fetch("/api/rtc", {
+        const res = await fetch(rtcBase(), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
