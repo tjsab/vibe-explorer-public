@@ -1,14 +1,15 @@
 # Vibe Explorer
 
-A three.js community space where people can gather to sing, dance, grow, eat, learn, and do Bhakti together.
+A browser space where people wander, sing, grow food, and sit together.
 
 Live demo: https://tjsab.github.io/vibe-explorer-public/
 
 ## Current features
 
-- Anonymous name on join
-- Simple 3D community gathering space
-- WASD movement
-- Basic action buttons (Greet, Sing, Dance, Pray)
+- Anonymous number when you arrive (Anon 1000–9999)
+- Quiet flute and wind in the trees, after the first tap
+- A simple tune when you press Sing
+- Touch joystick and WASD
+- Harvest, dance, greet, and sit
 
 Built with three.js.

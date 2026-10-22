@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 
-const names = ['Aarav', 'Priya', 'Rohan', 'Ananya', 'Vivaan', 'Isha', 'Arjun', 'Meera', 'Kabir', 'Saanvi', 'Dev', 'Lakshmi', 'Hari', 'Radha', 'Maya', 'Leo'];
-const anonName = names[Math.floor(Math.random() * names.length)] + ' ' + Math.floor(Math.random() * 99);
+function anonTag() {
+  return 'Anon ' + Math.floor(1000 + Math.random() * 9000);
+}
+const anonName = anonTag();
 document.getElementById('name').textContent = `You are ${anonName}`;
 
 const scene = new THREE.Scene();
@@ -217,7 +219,7 @@ function createNPC(x, z, color) {
   group.position.set(x, 0, z);
   group.userData = {
     type: 'npc',
-    name: names[Math.floor(Math.random()*names.length)],
+    name: anonTag(),
     dialogue: npcDialogues[Math.floor(Math.random()*npcDialogues.length)],
     target: new THREE.Vector3(x+(Math.random()-0.5)*12, 0, z+(Math.random()-0.5)*12),
     speed: 0.018 + Math.random()*0.015,
@@ -240,6 +242,160 @@ pHead.position.y = 2.1;
 player.add(pHead);
 player.position.set(0, 0, 12);
 scene.add(player);
+
+
+// Peaceful flute-forest bed. Starts on the first tap or key (mobile unlock).
+let audioCtx = null;
+let master = null;
+let forestBus = null;
+let fluteNext = 0;
+let songNext = 0;
+let songStep = 0;
+let forestDuck = false;
+const forestNotes = [293.66, 329.63, 369.99, 440, 493.88, 587.33, 659.25];
+const singPhrase = [
+  [293.66, 0.5], [329.63, 0.5], [369.99, 0.5], [440, 0.78],
+  [493.88, 0.42], [440, 0.42], [369.99, 0.5], [329.63, 0.96],
+  [369.99, 0.46], [440, 0.46], [493.88, 0.7], [587.33, 0.46],
+  [493.88, 0.46], [440, 0.5], [369.99, 0.5], [293.66, 1.2]
+];
+
+function playFlute(when, freq, dur, peak, dest) {
+  if (!audioCtx || dur <= 0.05) return;
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(freq, when);
+  const harm = audioCtx.createOscillator();
+  harm.type = 'triangle';
+  harm.frequency.setValueAtTime(freq * 2, when);
+  const g = audioCtx.createGain();
+  const gh = audioCtx.createGain();
+  const end = when + dur;
+  const loud = Math.max(peak, 0.0002);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(loud, when + Math.min(0.11, dur * 0.28));
+  g.gain.exponentialRampToValueAtTime(Math.max(loud * 0.42, 0.0002), when + dur * 0.58);
+  g.gain.exponentialRampToValueAtTime(0.0001, end);
+  gh.gain.setValueAtTime(0.0001, when);
+  gh.gain.exponentialRampToValueAtTime(Math.max(loud * 0.07, 0.0002), when + 0.07);
+  gh.gain.exponentialRampToValueAtTime(0.0001, when + dur * 0.62);
+  const vib = audioCtx.createOscillator();
+  vib.frequency.value = 4.5;
+  const vg = audioCtx.createGain();
+  vg.gain.setValueAtTime(0, when);
+  vg.gain.linearRampToValueAtTime(freq * 0.0055, when + 0.22);
+  vib.connect(vg);
+  vg.connect(osc.frequency);
+  osc.connect(g); g.connect(dest);
+  harm.connect(gh); gh.connect(dest);
+  const stop = end + 0.04;
+  vib.start(when); vib.stop(stop);
+  osc.start(when); osc.stop(stop);
+  harm.start(when); harm.stop(stop);
+}
+
+function startForest() {
+  if (!audioCtx || !master || forestBus) return;
+  const bus = audioCtx.createGain();
+  bus.gain.setValueAtTime(0.0001, audioCtx.currentTime);
+  bus.gain.exponentialRampToValueAtTime(1, audioCtx.currentTime + 2.6);
+  bus.connect(master);
+  forestBus = bus;
+  const seconds = 4;
+  const len = Math.floor(audioCtx.sampleRate * seconds);
+  const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  let brown = 0;
+  for (let i = 0; i < len; i++) {
+    const white = Math.random() * 2 - 1;
+    brown = brown * 0.986 + white * 0.014;
+    data[i] = brown * 7;
+  }
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  noise.loop = true;
+  const hp = audioCtx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.value = 160;
+  const lp = audioCtx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 640;
+  const lfo = audioCtx.createOscillator();
+  lfo.frequency.value = 0.045;
+  const lfoGain = audioCtx.createGain();
+  lfoGain.gain.value = 180;
+  lfo.connect(lfoGain);
+  lfoGain.connect(lp.frequency);
+  const wind = audioCtx.createGain();
+  wind.gain.value = 0.2;
+  noise.connect(hp); hp.connect(lp); lp.connect(wind); wind.connect(bus);
+  noise.start();
+  lfo.start();
+  fluteNext = audioCtx.currentTime + 1.4;
+}
+
+function ensureAudio() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  if (!audioCtx) {
+    audioCtx = new AC();
+    master = audioCtx.createGain();
+    master.gain.value = 0.42;
+    master.connect(audioCtx.destination);
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  startForest();
+}
+
+function updateForestAudio() {
+  if (!audioCtx || !forestBus) return;
+  const t = audioCtx.currentTime;
+  if (fluteNext < t) fluteNext = t + 0.3;
+  let guard = 0;
+  while (fluteNext < t + 0.5 && guard < 2) {
+    const freq = forestNotes[Math.floor(Math.random() * forestNotes.length)];
+    const dur = 1.8 + Math.random() * 1.6;
+    playFlute(fluteNext, freq, dur, 0.07 + Math.random() * 0.03, forestBus);
+    if (Math.random() < 0.4) {
+      const next = forestNotes[Math.floor(Math.random() * forestNotes.length)];
+      playFlute(fluteNext + 0.7, next, dur * 0.75, 0.035, forestBus);
+    }
+    fluteNext += 3.4 + Math.random() * 4.4;
+    guard++;
+  }
+}
+
+function updateSongAudio() {
+  if (!audioCtx || !master) return;
+  if (!singing) {
+    songNext = 0;
+    if (forestDuck && forestBus) {
+      forestDuck = false;
+      forestBus.gain.setTargetAtTime(1, audioCtx.currentTime, 0.45);
+    }
+    return;
+  }
+  if (!forestDuck && forestBus) {
+    forestDuck = true;
+    forestBus.gain.setTargetAtTime(0.32, audioCtx.currentTime, 0.25);
+  }
+  const t = audioCtx.currentTime;
+  if (songNext < t) songNext = t + 0.06;
+  let guard = 0;
+  while (songNext < t + 0.7 && guard < 8) {
+    const note = singPhrase[songStep % singPhrase.length];
+    songStep++;
+    playFlute(songNext, note[0], Math.max(0.2, note[1] * 0.92), 0.16, master);
+    songNext += note[1];
+    guard++;
+  }
+}
+
+window.addEventListener('pointerdown', ensureAudio);
+window.addEventListener('keydown', ensureAudio);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && audioCtx) audioCtx.resume();
+});
 
 // Controls: keyboard + touch joystick
 const keys = {};
@@ -373,10 +529,11 @@ function updateAnimals() {
 let singing = false;
 window.sayHello = () => showMessage(`${anonName} greets everyone.`);
 window.startSinging = () => {
+  ensureAudio();
   singing = !singing;
   singingRing.visible = singing;
   npcs.forEach(n => n.userData.singing = singing);
-  showMessage(singing ? `${anonName} starts a song. Others come join the circle.` : 'Singing stops.');
+  showMessage(singing ? 'A small tune. Others come join the circle.' : 'The song rests. The trees keep going.');
 };
 window.dance = () => {
   showMessage(`${anonName} dances.`);
@@ -412,6 +569,8 @@ function animate() {
   updateNPCs();
   updateAnimals();
   if (singing) singingRing.rotation.z += 0.008;
+  updateForestAudio();
+  updateSongAudio();
   renderer.render(scene, camera);
 }
 animate();
@@ -422,5 +581,5 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-showMessage('Use the joystick (or WASD) to roam. Click crops/people. Try Sing.');
+showMessage('You are ' + anonName + '. Tap once for the forest. Sing for a small tune.');
 console.log('Vibe Explorer upgraded with touch controls, water, animals, singing circle.');
