@@ -602,32 +602,32 @@ function Village({
       <div className="vibe-topcol">
         {topHidden ? (
           <button type="button" className="vibe-topback" onClick={toggleTop}>
-            {p2p.joined ? "Live" : "Linking"} · {room}
+            {p2p.joined ? "Live" : "…"} · {room}
           </button>
         ) : (
         <header className="vibe-hud vibe-glass">
-          <p className="vibe-kicker">Shared meadow</p>
-          <h1>Vibe Explorer</h1>
-          <input
-            className="vibe-name"
-            aria-label="Your name"
-            defaultValue={name}
-            maxLength={24}
-            onBlur={(e) => onRename(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-          <p className="vibe-presence">{presenceLine(p2p.joined, p2p.peers)}</p>
-          <div className="vibe-roomrow">
-            <span className="vibe-code">{p2p.joined ? "Live" : "Linking"} · {room}</span>
-            <button type="button" className="vibe-iconbtn" onClick={() => void copyLink()}>
-              <Link className="size-4" aria-hidden="true" />
-              {copied ? "Copied" : "Invite"}
+          <div className="vibe-bar">
+            <input
+              className="vibe-name"
+              aria-label="Your name"
+              defaultValue={name}
+              maxLength={24}
+              onBlur={(e) => onRename(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              }}
+            />
+            <span className="vibe-code">{p2p.joined ? "Live" : "…"} · {room}</span>
+            <button type="button" className="vibe-iconbtn vibe-mini" onClick={() => void copyLink()} aria-label={copied ? "Copied" : "Copy invite link"}>
+              <Link className="size-3.5" aria-hidden="true" />
+            </button>
+            <button type="button" className="vibe-caret" onClick={toggleTop} aria-label="Fold the room box">
+              ^
             </button>
           </div>
+          {p2p.peers.length > 0 ? <p className="vibe-presence">{presenceLine(p2p.joined, p2p.peers)}</p> : null}
           <details className="vibe-more">
-            <summary>Private room</summary>
+            <summary>Room</summary>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -641,14 +641,11 @@ function Village({
                 onChange={(e) => setRoomDraft(e.target.value)}
                 maxLength={24}
               />
-              <button type="submit" className="vibe-iconbtn">
+              <button type="submit" className="vibe-iconbtn vibe-mini">
                 Join
               </button>
             </form>
           </details>
-          <button type="button" className="vibe-toplink" onClick={toggleTop}>
-            Fold
-          </button>
         </header>
         )}
       </div>

@@ -78,55 +78,56 @@
 .vibe-topcol {
   position: absolute;
   z-index: 3;
-  top: calc(10px + env(safe-area-inset-top));
-  left: max(10px, env(safe-area-inset-left));
-  right: max(108px, calc(env(safe-area-inset-right) + 98px));
+  top: calc(8px + env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
+  right: auto;
+  max-width: min(280px, calc(100% - 64px));
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
   pointer-events: none;
 }
 
 .vibe-hud {
   position: relative;
-  width: 100%;
-  padding: 10px 14px;
-  border-radius: 1.25rem;
+  width: auto;
+  max-width: 100%;
+  padding: 4px 6px 4px 10px;
+  border-radius: 16px;
   display: flex;
   flex-direction: column;
   gap: 2px;
   pointer-events: auto;
 }
 
+.vibe-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .vibe-kicker {
-  margin: 0;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-muted);
+  display: none;
 }
 
 .vibe-hud h1 {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: 1.45rem;
-  font-weight: 680;
-  line-height: 1.1;
-  color: var(--color-cream);
+  display: none;
 }
 
 .vibe-name {
-  width: 100%;
-  margin: 2px 0 0;
+  width: auto;
+  flex: 1;
+  min-width: 72px;
+  margin: 0;
   border: 0;
   padding: 0;
   background: transparent;
   color: var(--color-cream);
   font: inherit;
   font-weight: 700;
-  font-size: 0.95rem;
+  font-size: 0.82rem;
 }
 
 .vibe-name:focus {
@@ -135,9 +136,13 @@
 
 .vibe-presence {
   margin: 0;
+  max-width: 240px;
   color: var(--color-sand);
-  font-size: 0.85rem;
-  line-height: 1.35;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .vibe-roomrow {
@@ -148,9 +153,28 @@
 }
 
 .vibe-code {
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--color-amber);
+  white-space: nowrap;
+}
+
+.vibe-mini,
+.vibe-caret {
+  min-height: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 7px;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.vibe-caret {
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-sand) 42%, transparent);
+  background: transparent;
+  color: var(--color-cream);
+  font-weight: 700;
 }
 
 .vibe-iconbtn,
@@ -463,7 +487,8 @@
 
 .vibe-more summary {
   cursor: pointer;
-  min-height: 28px;
+  min-height: 22px;
+  font-size: 0.72rem;
 }
 
 .vibe-more form {

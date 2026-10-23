@@ -710,18 +710,6 @@ export class VillageWorld {
 
     this.camera.position.set(0, 9, 30);
     this.scene.add(this.camera);
-    const sunDisc = new THREE.Mesh(
-      new THREE.CircleGeometry(3.2, 24),
-      new THREE.MeshBasicMaterial({ color: 0xfff3c4, transparent: true, opacity: 0.95, depthWrite: false }),
-    );
-    sunDisc.position.set(-9, 16, -42);
-    this.camera.add(sunDisc);
-    const halo = new THREE.Mesh(
-      new THREE.CircleGeometry(6.2, 24),
-      new THREE.MeshBasicMaterial({ color: 0xffe0a8, transparent: true, opacity: 0.28, depthWrite: false }),
-    );
-    halo.position.copy(sunDisc.position);
-    this.camera.add(halo);
 
     this.timer.connect(document);
     this.resize();
@@ -748,9 +736,9 @@ export class VillageWorld {
     window.addEventListener("blur", this.onBlur);
     window.addEventListener("focusin", this.onFocusIn);
     window.addEventListener("resize", this.onResize);
-    window.addEventListener("pointerdown", this.onUnlock);
-    window.addEventListener("touchstart", this.onUnlock, { passive: true });
-    window.addEventListener("keydown", this.onUnlock);
+    window.addEventListener("pointerdown", this.onUnlock, true);
+    window.addEventListener("touchstart", this.onUnlock, true);
+    window.addEventListener("keydown", this.onUnlock, true);
     document.addEventListener("visibilitychange", this.onVis);
     canvas.addEventListener("click", this.onClick);
 
@@ -799,9 +787,9 @@ export class VillageWorld {
     window.removeEventListener("blur", this.onBlur);
     window.removeEventListener("focusin", this.onFocusIn);
     window.removeEventListener("resize", this.onResize);
-    window.removeEventListener("pointerdown", this.onUnlock);
-    window.removeEventListener("touchstart", this.onUnlock);
-    window.removeEventListener("keydown", this.onUnlock);
+    window.removeEventListener("pointerdown", this.onUnlock, true);
+    window.removeEventListener("touchstart", this.onUnlock, true);
+    window.removeEventListener("keydown", this.onUnlock, true);
     document.removeEventListener("visibilitychange", this.onVis);
     this.renderer.domElement.removeEventListener("click", this.onClick);
     if (window.__controlsTest) delete window.__controlsTest;
@@ -1729,14 +1717,19 @@ export class VillageWorld {
       master.connect(ctx.destination);
       this.audio = ctx;
       this.master = master;
+      const blip = ctx.createBufferSource();
+      blip.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      blip.connect(master);
+      blip.start(0);
     }
-    if (this.audio.state === "suspended") void this.audio.resume().then(() => this.startForest());
+    const ctx = this.audio;
+    if (!ctx) return;
+    if (ctx.state !== "running") void ctx.resume();
     this.startForest();
   }
 
   private startForest() {
     if (!this.audio || !this.master || this.forestReady) return;
-    if (this.audio.state !== "running") return;
     this.forestReady = true;
     const ctx = this.audio;
     const bus = ctx.createGain();
