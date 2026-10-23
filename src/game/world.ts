@@ -532,7 +532,7 @@ export class VillageWorld {
   private mode: "sing" | "sit" | "quiet" | null = null;
   private emote: "dance" | "wave" | "eat" | null = null;
   private emoteUntil = 0;
-  private food: number;
+  private food = 0;
   private marketFood = 0;
   private service = 0;
   private readonly scores = new Map<string, number>();
@@ -586,6 +586,7 @@ export class VillageWorld {
   private pond = { x: 20, z: -10, r: 8.15 };
   private readonly name: string;
   private readonly color: number;
+  private readonly roomId: string;
   private onKeyDown: (e: KeyboardEvent) => void;
   private onKeyUp: (e: KeyboardEvent) => void;
   private onBlur: () => void;
@@ -595,17 +596,12 @@ export class VillageWorld {
   private onUnlock: () => void;
   private onVis: () => void;
 
-  constructor(canvas: HTMLCanvasElement, hooks: WorldHooks, identity: { name: string; color: number }) {
+  constructor(canvas: HTMLCanvasElement, hooks: WorldHooks, identity: { name: string; color: number; room: string }) {
     this.hooks = hooks;
     this.name = identity.name;
     this.color = identity.color;
-    const savedFood = Number(sessionStorage.getItem("vibe-food") ?? "0");
-    this.food = Number.isFinite(savedFood) ? Math.max(0, Math.min(12, Math.floor(savedFood))) : 0;
-    const savedService = Number(sessionStorage.getItem("vibe-service") ?? "0");
-    this.service = Number.isFinite(savedService) ? Math.max(0, Math.min(999, Math.floor(savedService))) : 0;
-    if (this.service > 0) this.scores.set(this.name, this.service);
-    const savedMarket = Number(sessionStorage.getItem("vibe-market") ?? "0");
-    this.marketFood = Number.isFinite(savedMarket) ? Math.max(0, Math.min(99, Math.floor(savedMarket))) : 0;
+    this.roomId = identity.room.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "village";
+    this.loadRoom();
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
@@ -1106,16 +1102,54 @@ export class VillageWorld {
     this.scores.set(name, next);
     if (name === this.name) {
       this.service = next;
-      this.persistService();
+      this.persistRoom();
     }
   }
 
-  private persistMarket() {
-    sessionStorage.setItem("vibe-market", String(this.marketFood));
+  private loadRoom() {
+    let saved: { service?: number; market?: number; food?: number; scores?: { n: string; p: number }[] } | null = null;
+    try {
+      const raw = localStorage.getItem(`vibe-room:${this.roomId}`);
+      if (raw) saved = JSON.parse(raw) as typeof saved;
+    } catch {
+      saved = null;
+    }
+    if (!saved && this.roomId === "village") {
+      const service = Number(sessionStorage.getItem("vibe-service") ?? "0");
+      const market = Number(sessionStorage.getItem("vibe-market") ?? "0");
+      const food = Number(sessionStorage.getItem("vibe-food") ?? "0");
+      if (service > 0 || market > 0 || food > 0) saved = { service, market, food };
+      sessionStorage.removeItem("vibe-service");
+      sessionStorage.removeItem("vibe-market");
+      sessionStorage.removeItem("vibe-food");
+    }
+    const service = Number(saved?.service ?? 0);
+    const market = Number(saved?.market ?? 0);
+    const food = Number(saved?.food ?? 0);
+    this.service = Number.isFinite(service) ? Math.max(0, Math.min(999, Math.floor(service))) : 0;
+    this.marketFood = Number.isFinite(market) ? Math.max(0, Math.min(99, Math.floor(market))) : 0;
+    this.food = Number.isFinite(food) ? Math.max(0, Math.min(12, Math.floor(food))) : 0;
+    for (const row of saved?.scores ?? []) {
+      if (!row || typeof row.n !== "string" || typeof row.p !== "number") continue;
+      const who = asAnon(row.n, row.n);
+      this.scores.set(who, Math.max(0, Math.min(999, Math.floor(row.p))));
+    }
+    if (this.service > 0) this.scores.set(this.name, Math.max(this.scores.get(this.name) ?? 0, this.service));
   }
 
-  private persistService() {
-    sessionStorage.setItem("vibe-service", String(this.service));
+  private persistRoom() {
+    try {
+      const scores = [...this.scores.entries()]
+        .filter(([, points]) => points > 0)
+        .slice(0, 24)
+        .map(([n, p]) => ({ n, p }));
+      localStorage.setItem(
+        `vibe-room:${this.roomId}`,
+        JSON.stringify({ service: this.service, market: this.marketFood, food: this.food, scores }),
+      );
+    } catch {
+      /* private mode */
+    }
   }
 
   private refreshBoard() {
@@ -1169,7 +1203,11 @@ export class VillageWorld {
   }
 
   private persistFood() {
-    sessionStorage.setItem("vibe-food", String(this.food));
+    this.persistRoom();
+  }
+
+  private persistMarket() {
+    this.persistRoom();
   }
 
   private ensureAudio() {

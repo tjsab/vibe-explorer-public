@@ -166,13 +166,13 @@ function Village({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const world = new VillageWorld(canvas, hooks.current, { name, color });
+    const world = new VillageWorld(canvas, hooks.current, { name, color, room });
     worldRef.current = world;
     return () => {
       world.dispose();
       worldRef.current = null;
     };
-  }, [name, color]);
+  }, [name, color, room]);
 
   useEffect(() => {
     return p2p.onMessage(async (from, data, channel) => {
