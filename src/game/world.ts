@@ -1391,7 +1391,7 @@ export class VillageWorld {
 
   leaveBasket(): number {
     if (!this.nearMarket()) {
-      this.hooks.onToast("The market hall is east of the fire.");
+      this.hooks.onToast("The market is the round pavilion east of the fire.");
       return 0;
     }
     if (this.food <= 0 && this.milk <= 0 && this.eggs <= 0) {
@@ -1427,7 +1427,7 @@ export class VillageWorld {
 
   takeFromMarket(): number {
     if (!this.nearMarket()) {
-      this.hooks.onToast("The market hall is east of the fire.");
+      this.hooks.onToast("The market is the round pavilion east of the fire.");
       return 0;
     }
     const good: Good | null =
@@ -2708,116 +2708,124 @@ export class VillageWorld {
   private addMarket() {
     const cx = 21;
     const cz = 8;
-    const plaster = new THREE.MeshStandardMaterial({ color: 0xf3e6d4, roughness: 0.84 });
-    const timber = new THREE.MeshStandardMaterial({ color: 0x6a4632, roughness: 0.88 });
-    const tile = new THREE.MeshStandardMaterial({ color: 0x9c4332, roughness: 0.74 });
-    const stone = new THREE.MeshStandardMaterial({ color: 0xd2c3ae, roughness: 0.96 });
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0xe7d3b4, roughness: 0.9 });
+    const timber = new THREE.MeshStandardMaterial({ color: 0x6a4632, roughness: 0.86 });
+    const tile = new THREE.MeshStandardMaterial({ color: 0xa24b38, roughness: 0.72 });
+    const underside = new THREE.MeshStandardMaterial({ color: 0xe7c9a4, roughness: 0.8, side: THREE.DoubleSide });
+    const stone = new THREE.MeshStandardMaterial({ color: 0xd7c6b0, roughness: 0.95 });
+    const clay = new THREE.MeshStandardMaterial({ color: 0xc47b4a, roughness: 0.8 });
 
-    const court = new THREE.Mesh(new THREE.BoxGeometry(12, 0.08, 9.2), stone);
-    court.position.set(cx - 1.2, 0.04, cz);
+    const court = new THREE.Mesh(new THREE.CylinderGeometry(6.1, 6.2, 0.1, 32), stone);
+    court.position.set(cx, 0.05, cz);
     court.receiveShadow = true;
     this.scene.add(court);
+    const lip = new THREE.Mesh(new THREE.TorusGeometry(5.85, 0.12, 8, 40), stone);
+    lip.rotation.x = Math.PI / 2;
+    lip.position.set(cx, 0.12, cz);
+    this.scene.add(lip);
+
     for (let i = 0; i < 6; i += 1) {
-      const slab = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.05, 0.85), stone);
-      slab.position.set(cx - 7.4 - i * 1.45, 0.03, cz + (i % 2 === 0 ? -0.35 : 0.4));
-      slab.receiveShadow = true;
-      this.scene.add(slab);
+      const step = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.06, 12), stone);
+      step.position.set(cx - 7.2 - i * 1.35, 0.03, cz - 0.2 + (i % 2) * 0.55);
+      step.receiveShadow = true;
+      this.scene.add(step);
     }
 
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.12, 5.6), floorMat);
-    floor.position.set(cx + 0.5, 0.1, cz);
-    floor.receiveShadow = true;
-    this.scene.add(floor);
-
-    const back = new THREE.Mesh(new THREE.BoxGeometry(0.32, 2.8, 5.8), plaster);
-    back.position.set(cx + 4.1, 1.5, cz);
-    back.castShadow = true;
-    back.receiveShadow = true;
-    this.scene.add(back);
-    [-1.6, 0, 1.6].forEach((dz) => this.addCollider(cx + 4.1, cz + dz, 0.7));
-
-    [-2.75, 2.75].forEach((dz) => {
-      const side = new THREE.Mesh(new THREE.BoxGeometry(6.6, 2.55, 0.28), plaster);
-      side.position.set(cx + 0.7, 1.38, cz + dz);
-      side.castShadow = true;
-      side.receiveShadow = true;
-      this.scene.add(side);
-      [-1.4, 0.8, 2.6].forEach((dx) => this.addCollider(cx + dx, cz + dz, 0.55));
-    });
-
-    [-2.2, 0, 2.2].forEach((dz) => {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.24, 2.75, 0.24), timber);
-      post.position.set(cx - 2.55, 1.48, cz + dz);
+    for (let i = 0; i < 6; i += 1) {
+      const a = (i / 6) * Math.PI * 2 + 0.25;
+      const px = cx + Math.cos(a) * 4.15;
+      const pz = cz + Math.sin(a) * 4.15;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.18, 3.05, 8), timber);
+      post.position.set(px, 1.55, pz);
       post.castShadow = true;
       this.scene.add(post);
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.12, 0.4), timber);
-      cap.position.set(cx - 2.55, 2.9, cz + dz);
-      this.scene.add(cap);
-    });
+      this.addCollider(px, pz, 0.28);
+    }
 
-    const south = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.14, 3.4), tile);
-    south.position.set(cx + 0.45, 3.25, cz - 1.35);
-    south.rotation.x = 0.42;
-    south.castShadow = true;
-    this.scene.add(south);
-    const north = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.14, 3.4), tile);
-    north.position.set(cx + 0.45, 3.25, cz + 1.35);
-    north.rotation.x = -0.42;
-    north.castShadow = true;
-    this.scene.add(north);
-    const ridge = new THREE.Mesh(new THREE.BoxGeometry(7.9, 0.12, 0.18), timber);
-    ridge.position.set(cx + 0.45, 3.72, cz);
-    this.scene.add(ridge);
+    const beam = new THREE.Mesh(new THREE.TorusGeometry(4.15, 0.09, 8, 36), timber);
+    beam.rotation.x = Math.PI / 2;
+    beam.position.set(cx, 3.05, cz);
+    this.scene.add(beam);
 
-    const counters: { z: number; top: number }[] = [
-      { z: cz - 1.7, top: 0x6e9a52 },
-      { z: cz, top: 0xf7f4ee },
-      { z: cz + 1.7, top: 0xf6e7c4 },
-    ];
-    counters.forEach((counter) => {
-      const base = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.72, 1.15), timber);
-      base.position.set(cx + 2.7, 0.46, counter.z);
-      base.castShadow = true;
-      this.scene.add(base);
-      const top = new THREE.Mesh(
-        new THREE.BoxGeometry(1.6, 0.08, 1.25),
-        new THREE.MeshStandardMaterial({ color: counter.top, roughness: 0.7 }),
-      );
-      top.position.set(cx + 2.7, 0.86, counter.z);
-      this.scene.add(top);
-    });
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(5.35, 1.55, 6), tile);
+    roof.position.set(cx, 3.85, cz);
+    roof.rotation.y = Math.PI / 6;
+    roof.castShadow = true;
+    this.scene.add(roof);
+    const ceiling = new THREE.Mesh(new THREE.ConeGeometry(4.7, 1.15, 6), underside);
+    ceiling.position.set(cx, 3.55, cz);
+    ceiling.rotation.y = Math.PI / 6;
+    this.scene.add(ceiling);
 
-    const lanternMat = new THREE.MeshStandardMaterial({
+    const table = new THREE.Mesh(new THREE.CylinderGeometry(1.45, 1.5, 0.72, 16), timber);
+    table.position.set(cx, 0.42, cz);
+    table.castShadow = true;
+    table.receiveShadow = true;
+    this.scene.add(table);
+    const top = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.58, 1.58, 0.08, 16),
+      new THREE.MeshStandardMaterial({ color: 0xf3e6d2, roughness: 0.75 }),
+    );
+    top.position.set(cx, 0.82, cz);
+    this.scene.add(top);
+    this.addCollider(cx, cz, 1.15);
+
+    const logMat = new THREE.MeshStandardMaterial({ color: 0x6b4428, roughness: 0.9 });
+    for (let i = 0; i < 5; i += 1) {
+      const a = -0.4 + (i / 5) * Math.PI * 1.55;
+      const bx = cx + Math.cos(a) * 2.85;
+      const bz = cz + Math.sin(a) * 2.85;
+      const log = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, 1.35, 8), logMat);
+      log.rotation.z = Math.PI / 2;
+      log.rotation.y = a + Math.PI / 2;
+      log.position.set(bx, 0.28, bz);
+      log.castShadow = true;
+      this.scene.add(log);
+      this.benches.push({ x: bx, z: bz });
+    }
+
+    const lantern = new THREE.MeshStandardMaterial({
       color: 0xffe0a0,
       emissive: 0xffc46b,
-      emissiveIntensity: 0.7,
+      emissiveIntensity: 0.85,
       roughness: 0.4,
     });
-    [-2.2, 2.2].forEach((dz) => {
-      const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.22), lanternMat);
-      lamp.position.set(cx - 2.55, 2.35, cz + dz);
+    for (let i = 0; i < 3; i += 1) {
+      const a = (i / 3) * Math.PI * 2;
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), lantern);
+      lamp.position.set(cx + Math.cos(a) * 2.4, 2.55, cz + Math.sin(a) * 2.4);
       this.scene.add(lamp);
+    }
+    const glow = new THREE.PointLight(0xffc98a, 9, 16, 2);
+    glow.position.set(cx, 2.3, cz);
+    this.scene.add(glow);
+
+    [0, 1].forEach((side) => {
+      const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.16, 0.32, 8), clay);
+      pot.position.set(cx - 4.6, 0.2, cz + (side === 0 ? -1.3 : 1.3));
+      this.scene.add(pot);
+      const leaf = new THREE.Mesh(
+        new THREE.ConeGeometry(0.28, 0.45, 6),
+        new THREE.MeshStandardMaterial({ color: 0x3f8f45, roughness: 0.75 }),
+      );
+      leaf.position.set(cx - 4.6, 0.52, cz + (side === 0 ? -1.3 : 1.3));
+      this.scene.add(leaf);
     });
-    const hallLight = new THREE.PointLight(0xffd7a8, 6, 14, 2);
-    hallLight.position.set(cx + 0.4, 2.4, cz);
-    this.scene.add(hallLight);
 
     const sign = makeSprite("Market", "rgba(92,59,46,0.92)", "#f6efe6", 3.15);
-    sign.position.set(cx - 2.4, 3.35, cz);
+    sign.position.set(cx - 4.3, 2.15, cz);
     this.scene.add(sign);
     this.board = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: paintBoard(["Greens 0", "Milk 0", "Eggs 0"]), transparent: true, depthWrite: false }),
     );
-    this.board.position.set(cx - 2.2, 1.7, cz + 3.55);
-    this.board.scale.set(2.8, 2.05, 1);
+    this.board.position.set(cx - 3.2, 1.55, cz + 3.4);
+    this.board.scale.set(2.6, 1.9, 1);
     this.board.renderOrder = 6;
     this.scene.add(this.board);
 
     const pileMat = new THREE.MeshStandardMaterial({ color: 0xd3543c, roughness: 0.55 });
     for (let i = 0; i < 8; i += 1) {
-      const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), pileMat);
-      fruit.position.set(cx + 2.45 + (i % 4) * 0.16, 1.02, cz - 1.7 + Math.floor(i / 4) * 0.16);
+      const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8), pileMat);
+      fruit.position.set(cx - 0.15 + (i % 4) * 0.18, 0.98, cz - 0.55 + Math.floor(i / 4) * 0.18);
       fruit.visible = false;
       fruit.castShadow = true;
       this.scene.add(fruit);
@@ -2825,19 +2833,19 @@ export class VillageWorld {
     }
     const eggMat = new THREE.MeshStandardMaterial({ color: 0xf7f1e4, roughness: 0.45 });
     for (let i = 0; i < 6; i += 1) {
-      const egg = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), eggMat);
+      const egg = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), eggMat);
       egg.scale.set(0.85, 1.15, 0.85);
-      egg.position.set(cx + 2.5 + (i % 3) * 0.18, 1.02, cz + 1.55 + Math.floor(i / 3) * 0.16);
+      egg.position.set(cx + 0.15 + (i % 3) * 0.16, 0.98, cz + 0.45 + Math.floor(i / 3) * 0.16);
       egg.visible = false;
       egg.castShadow = true;
       this.scene.add(egg);
       this.eggPile.push(egg);
     }
     this.pail = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.18, 0.16, 0.32, 10),
+      new THREE.CylinderGeometry(0.16, 0.14, 0.28, 10),
       new THREE.MeshStandardMaterial({ color: 0xf4f7fb, roughness: 0.32, metalness: 0.2 }),
     );
-    this.pail.position.set(cx + 2.7, 1.08, cz);
+    this.pail.position.set(cx + 0.55, 1.04, cz - 0.05);
     this.pail.visible = false;
     this.pail.castShadow = true;
     this.scene.add(this.pail);
