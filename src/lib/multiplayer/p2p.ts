@@ -120,6 +120,7 @@ export class P2PRoom {
   private misses = 0;
   private lastPeersFingerprint = "";
   private mic: MediaStream | null = null;
+  private micPromise: Promise<"ok" | "no-mic"> | null = null;
   private voicePeer: string | null = null;
   private voiceCtx: AudioContext | null = null;
 
@@ -188,48 +189,69 @@ export class P2PRoom {
     this.opts.name = clean;
   }
 
-  /** Voice only, one person. The audio line is opened with the room, then the mic is attached. */
+  /** Start the mic and the speaker inside the button tap. Call this before any await. */
+  primeVoice(peerId: string): Promise<"ok" | "no-mic"> {
+    if (!this.micPromise) {
+      const live = this.mic?.getAudioTracks().some((track) => track.readyState === "live");
+      if (live) this.micPromise = Promise.resolve("ok");
+      else if (!navigator.mediaDevices?.getUserMedia) this.micPromise = Promise.resolve("no-mic");
+      else {
+        const pending = navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        this.micPromise = pending
+          .then((stream) => {
+            this.mic = stream;
+            return "ok" as const;
+          })
+          .catch(() => {
+            this.micPromise = null;
+            return "no-mic" as const;
+          });
+      }
+    }
+    const slot = this.peers.get(peerId);
+    if (slot) this.armEar(slot);
+    return this.micPromise;
+  }
+
+  /** Voice only, one person. The mic promise must already have been started from a tap. */
   async beginVoice(peerId: string): Promise<"ok" | "no-mic" | "not-ready"> {
     const slot = this.peers.get(peerId);
-    if (!slot || slot.info.connectionState !== "connected") return "not-ready";
+    if (!slot || !this.linkUp(slot)) return "not-ready";
     this.armEar(slot);
-    if (!navigator.mediaDevices?.getUserMedia) return "no-mic";
-    try {
-      if (!this.mic) {
-        this.mic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      }
-    } catch {
-      return "no-mic";
-    }
-    const track = this.mic.getAudioTracks()[0];
+    const mic = await (this.micPromise ?? this.primeVoice(peerId));
+    if (mic !== "ok" || !this.mic) return "no-mic";
+    const track = this.mic.getAudioTracks().find((item) => item.readyState === "live");
     if (!track) return "no-mic";
-    if (this.voicePeer && this.voicePeer !== peerId) this.endVoice();
-    this.voicePeer = peerId;
-    track.enabled = true;
-    const transceiver = this.voiceTransceiver(slot);
-    transceiver.direction = "sendrecv";
-    await transceiver.sender.replaceTrack(track);
-    slot.audioSender = transceiver.sender;
     try {
-      const params = transceiver.sender.getParameters();
-      if (!params.encodings?.length) params.encodings = [{}];
-      params.encodings[0].maxBitrate = 24000;
-      await transceiver.sender.setParameters(params);
+      if (this.voicePeer && this.voicePeer !== peerId) this.endVoice();
+      this.voicePeer = peerId;
+      track.enabled = true;
+      const transceiver = this.voiceTransceiver(slot);
+      if (transceiver.direction !== "sendrecv") transceiver.direction = "sendrecv";
+      await transceiver.sender.replaceTrack(track);
+      slot.audioSender = transceiver.sender;
+      if (slot.incoming) this.hear(slot, slot.incoming);
+      return "ok";
     } catch {
-      /* a phone may refuse bitrate hints; the mic still sends */
+      return "not-ready";
     }
-    if (slot.incoming) this.hear(slot, slot.incoming);
-    return "ok";
   }
 
   endVoice() {
     const id = this.voicePeer;
     this.voicePeer = null;
     const slot = id ? this.peers.get(id) : undefined;
-    if (slot?.audioSender) void slot.audioSender.replaceTrack(null);
+    if (slot?.audioSender) void slot.audioSender.replaceTrack(null).catch(() => undefined);
     this.mic?.getTracks().forEach((track) => track.stop());
     this.mic = null;
+    this.micPromise = null;
     this.quiet(slot);
+  }
+
+  private linkUp(slot: PeerSlot): boolean {
+    if (slot.reliable?.readyState === "open" || slot.state?.readyState === "open") return true;
+    const ice = slot.pc.iceConnectionState;
+    return slot.pc.connectionState === "connected" || ice === "connected" || ice === "completed";
   }
 
   private armEar(slot: PeerSlot) {
@@ -292,9 +314,14 @@ export class P2PRoom {
   }
 
   private voiceTransceiver(slot: PeerSlot): RTCRtpTransceiver {
-    const found = slot.pc.getTransceivers().find((t) => t.receiver.track?.kind === "audio" || t.sender.track?.kind === "audio");
+    const list = slot.pc.getTransceivers();
+    const owned = slot.audioSender ? list.find((t) => t.sender === slot.audioSender) : undefined;
+    if (owned) return owned;
+    const found = list.find((t) => t.receiver.track?.kind === "audio" || t.sender.track?.kind === "audio");
     if (found) return found;
-    return slot.pc.addTransceiver("audio", { direction: "sendrecv" });
+    const created = slot.pc.addTransceiver("audio", { direction: "sendrecv" });
+    slot.audioSender = created.sender;
+    return created;
   }
 
   private async publishLocal(pc: RTCPeerConnection) {
@@ -448,6 +475,7 @@ export class P2PRoom {
     pc.ontrack = (e) => {
       if (e.track.kind !== "audio") return;
       const stream = e.streams[0]?.getAudioTracks().length ? e.streams[0] : new MediaStream([e.track]);
+      if (e.transceiver) slot.audioSender = e.transceiver.sender;
       const play = () => this.hear(slot, stream);
       e.track.onunmute = play;
       e.track.onended = () => this.quiet(slot);
@@ -471,6 +499,10 @@ export class P2PRoom {
     else slot.reliable = channel;
     channel.onopen = () => {
       slot.lastProgressAt = Date.now();
+      if (slot.info.connectionState !== "connected") {
+        slot.info.connectionState = "connected";
+        this.emitPeers();
+      }
     };
     channel.onmessage = (e) => {
       let msg: { t: string; d?: unknown };

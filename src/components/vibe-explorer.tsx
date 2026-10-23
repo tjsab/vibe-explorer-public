@@ -33,6 +33,7 @@ type Reliable =
   | { k: "call"; n: string }
   | { k: "call-yes"; n: string }
   | { k: "call-no" }
+  | { k: "call-fail"; why?: string }
   | { k: "call-end" };
 
 type FeedItem = { id: number; text: string };
@@ -216,17 +217,23 @@ function Village({
       } else if (msg.k === "call-yes") {
         const result = await p2p.beginVoice(from);
         if (result !== "ok") {
-          p2p.send({ k: "call-end" }, from);
+          p2p.send({ k: "call-fail", why: result }, from);
+          p2p.endVoice();
           setCall(null);
-          setToast(result === "no-mic" ? "The microphone stayed off." : "The talk couldn't start.");
+          setToast(result === "no-mic" ? "Your microphone didn't open. Allow it and tap Talk again." : "The voice path isn't open yet. Tap Talk again.");
           return;
         }
         world.setTalking(from, true);
         setCall((prev) => ({ id: from, name: prev?.name ?? "Someone", phase: "live" }));
         setToast("You're talking. Voice only.");
       } else if (msg.k === "call-no") {
+        p2p.endVoice();
         setCall(null);
         setToast("Not just now.");
+      } else if (msg.k === "call-fail") {
+        p2p.endVoice();
+        setCall(null);
+        setToast(msg.why === "no-mic" ? "Their microphone didn't open." : "The voice path didn't open. Try Talk again.");
       } else if (msg.k === "call-end") {
         p2p.endVoice();
         worldRef.current?.setTalking(from, false);
@@ -533,12 +540,21 @@ function Village({
                 type="button"
                 className="vibe-btn"
                 onClick={() => {
+                  const priming = p2p.primeVoice(call.id);
                   void (async () => {
+                    const mic = await priming;
+                    if (mic !== "ok") {
+                      p2p.send({ k: "call-fail", why: "no-mic" }, call.id);
+                      setCall(null);
+                      setToast("Your microphone didn't open. Allow it for the page, then tap Listen.");
+                      return;
+                    }
                     const result = await p2p.beginVoice(call.id);
                     if (result !== "ok") {
-                      p2p.send({ k: "call-no" }, call.id);
+                      p2p.send({ k: "call-fail", why: result }, call.id);
+                      p2p.endVoice();
                       setCall(null);
-                      setToast(result === "no-mic" ? "The microphone stayed off. You can still wave and type." : "The talk couldn't start.");
+                      setToast("The voice path isn't open yet. Ask them to tap Talk again.");
                       return;
                     }
                     p2p.send({ k: "call-yes", n: name }, call.id);
@@ -618,15 +634,23 @@ function Village({
                 setToast("Walk over to someone with a green dot.");
                 return;
               }
-              const ready = p2p.peers.some((p) => p.id === near.id && p.connectionState === "connected");
+              const ready = p2p.peers.some((p) => p.id === near.id && (p.connectionState === "connected" || p.connectionState === "connecting"));
               if (!ready) {
                 setToast(`${near.name} is still on the way.`);
                 return;
               }
-              p2p.send({ k: "call", n: name }, near.id);
-              worldRef.current?.announce(`${name} asks ${near.name} to talk.`);
-              setCall({ id: near.id, name: near.name, phase: "out" });
-              setToast(`Asking ${near.name}…`);
+              const priming = p2p.primeVoice(near.id);
+              void (async () => {
+                const mic = await priming;
+                if (mic !== "ok") {
+                  setToast("Your microphone didn't open. Allow it for the page, then tap Talk.");
+                  return;
+                }
+                p2p.send({ k: "call", n: name }, near.id);
+                worldRef.current?.announce(`${name} asks ${near.name} to talk.`);
+                setCall({ id: near.id, name: near.name, phase: "out" });
+                setToast(`Asking ${near.name}…`);
+              })();
             }}
           >
             <Phone className="size-4" aria-hidden="true" /> {call?.phase === "live" ? "Hang up" : call?.phase === "out" ? "Calling" : "Talk"}
