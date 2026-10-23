@@ -39,6 +39,8 @@ export interface PeerInfo {
   candidateType: string | null;
   /** Data-channel ping RTT (ms), measured every 2s once connected. */
   rttMs: number | null;
+  /** A pose arrived through the room, even if the direct link is still down. */
+  relayed?: boolean;
 }
 
 export interface P2PRoomOptions {
@@ -237,6 +239,7 @@ export class P2PRoom {
   private voicePeer: string | null = null;
   private voiceEpoch = 0;
   private voiceCtx: AudioContext | null = null;
+  private lastRelay = 0;
 
   constructor(opts: P2PRoomOptions) {
     this.opts = opts;
@@ -286,6 +289,18 @@ export class P2PRoom {
     for (const slot of this.peers.values()) {
       if (slot.state?.readyState === "open") slot.state.send(wire);
     }
+    this.relayPose(data);
+  }
+
+  /** Positions go through the room too, so a blocked direct link still shows the person. */
+  private relayPose(data: unknown) {
+    const pose = data as { k?: string };
+    if (pose?.k !== "pose" || this.peers.size === 0) return;
+    const now = Date.now();
+    if (now - this.lastRelay < 300) return;
+    this.lastRelay = now;
+    const payload = { vibe: "pose", ...pose };
+    for (const id of this.peers.keys()) void this.sendSignal(id, "ice", payload);
   }
 
   /** Send reliably (ordered) to one peer, or to all when peerId is omitted. */
@@ -730,6 +745,13 @@ export class P2PRoom {
           await this.sendSignal(from, "answer", slot.pc.localDescription!.toJSON());
         }
       } else if (kind === "ice") {
+        const marked = payload as { vibe?: string };
+        if (marked?.vibe === "pose") {
+          slot.info.relayed = true;
+          this.emitPeers();
+          this.opts.onMessage?.(from, payload, "state");
+          return;
+        }
         const candidate = payload as RTCIceCandidateInit;
         if (!slot.pc.remoteDescription) {
           // Candidate raced ahead of its SDP — hold it until the description
@@ -887,7 +909,7 @@ export class P2PRoom {
     // setters otherwise re-render consumers on every poll/ping.
     const list = this.peerList();
     const fingerprint = JSON.stringify(
-      list.map((p) => [p.id, p.name, p.connectionState, p.candidateType, p.rttMs]),
+      list.map((p) => [p.id, p.name, p.connectionState, p.candidateType, p.rttMs, p.relayed]),
     );
     if (fingerprint === this.lastPeersFingerprint) return;
     this.lastPeersFingerprint = fingerprint;

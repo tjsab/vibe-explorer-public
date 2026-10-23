@@ -106,7 +106,7 @@ function readColor() {
 function presenceLine(joined: boolean, peers: PeerInfo[]) {
   if (!joined) return "Opening a shared path…";
   const label = (p: PeerInfo) => asAnon(p.name || "", p.id);
-  const here = peers.filter((p) => p.connectionState === "connected");
+  const here = peers.filter((p) => p.connectionState === "connected" || p.relayed);
   const failed = peers.filter((p) => p.connectionState === "failed" || p.connectionState === "closed");
   if (peers.length === 0) return "Just you and the villagers. Send the link to invite someone.";
   if (here.length === 0 && failed.length === peers.length) {
@@ -314,6 +314,7 @@ function Village({
 
   useEffect(() => {
     const world = worldRef.current;
+    const roster = p2p.peers.map((p) => p.id);
     const connected = p2p.peers.filter((p) => p.connectionState === "connected").map((p) => p.id);
     const connectedSet = new Set(connected);
     for (const id of connected) {
@@ -328,8 +329,8 @@ function Village({
     for (const id of [...seen.current]) {
       if (!connectedSet.has(id)) seen.current.delete(id);
     }
-    world?.retainRemotes(connectedSet);
-    const ids = [p2p.selfId, ...connected];
+    world?.retainRemotes(new Set(roster));
+    const ids = [p2p.selfId, ...roster];
     world?.setDuty(ids.reduce((a, b) => (a < b ? a : b)) === p2p.selfId);
   }, [p2p.peers, p2p.selfId, p2p.send]);
 
