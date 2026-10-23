@@ -749,6 +749,7 @@ export class VillageWorld {
     window.addEventListener("focusin", this.onFocusIn);
     window.addEventListener("resize", this.onResize);
     window.addEventListener("pointerdown", this.onUnlock);
+    window.addEventListener("touchstart", this.onUnlock, { passive: true });
     window.addEventListener("keydown", this.onUnlock);
     document.addEventListener("visibilitychange", this.onVis);
     canvas.addEventListener("click", this.onClick);
@@ -799,6 +800,7 @@ export class VillageWorld {
     window.removeEventListener("focusin", this.onFocusIn);
     window.removeEventListener("resize", this.onResize);
     window.removeEventListener("pointerdown", this.onUnlock);
+    window.removeEventListener("touchstart", this.onUnlock);
     window.removeEventListener("keydown", this.onUnlock);
     document.removeEventListener("visibilitychange", this.onVis);
     this.renderer.domElement.removeEventListener("click", this.onClick);
@@ -1711,32 +1713,30 @@ export class VillageWorld {
     this.persistRoom();
   }
 
+  unlockAudio() {
+    this.ensureAudio();
+  }
+
   private ensureAudio() {
-    if (this.audio) {
-      if (this.audio.state === "suspended") void this.audio.resume();
-      this.startForest();
-      return;
+    if (!this.audio) {
+      const AC =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AC) return;
+      const ctx = new AC();
+      const master = ctx.createGain();
+      master.gain.value = 0.5;
+      master.connect(ctx.destination);
+      this.audio = ctx;
+      this.master = master;
     }
-    const AC =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AC) return;
-    const ctx = new AC();
-    const master = ctx.createGain();
-    master.gain.value = 0.42;
-    master.connect(ctx.destination);
-    this.audio = ctx;
-    this.master = master;
-    if (ctx.state === "suspended") void ctx.resume();
+    if (this.audio.state === "suspended") void this.audio.resume().then(() => this.startForest());
     this.startForest();
-    if (!this.heard) {
-      this.heard = true;
-      this.hooks.onToast("A quiet flute moves through the trees.");
-    }
   }
 
   private startForest() {
     if (!this.audio || !this.master || this.forestReady) return;
+    if (this.audio.state !== "running") return;
     this.forestReady = true;
     const ctx = this.audio;
     const bus = ctx.createGain();
@@ -1771,7 +1771,7 @@ export class VillageWorld {
     lfo.connect(lfoGain);
     lfoGain.connect(lp.frequency);
     const wind = ctx.createGain();
-    wind.gain.value = 0.2;
+    wind.gain.value = 0.28;
     noise.connect(hp);
     hp.connect(lp);
     lp.connect(wind);
@@ -1830,7 +1830,7 @@ export class VillageWorld {
     while (this.fluteNext < t + 0.5 && guard < 2) {
       const freq = this.forestNotes[Math.floor(Math.random() * this.forestNotes.length)];
       const dur = 1.8 + Math.random() * 1.6;
-      this.playFlute(this.fluteNext, freq, dur, 0.07 + Math.random() * 0.03, this.forest);
+      this.playFlute(this.fluteNext, freq, dur, 0.11 + Math.random() * 0.03, this.forest);
       if (Math.random() < 0.4) {
         const next = this.forestNotes[Math.floor(Math.random() * this.forestNotes.length)];
         this.playFlute(this.fluteNext + 0.7, next, dur * 0.75, 0.035, this.forest);

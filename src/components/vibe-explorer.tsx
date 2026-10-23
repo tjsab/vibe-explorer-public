@@ -93,6 +93,14 @@ function readClean() {
   }
 }
 
+function readTopHidden() {
+  try {
+    return localStorage.getItem("vibe-top") === "0";
+  } catch {
+    return false;
+  }
+}
+
 function readColor() {
   try {
     const saved = Number(localStorage.getItem("vibe-color") ?? "");
@@ -182,6 +190,7 @@ function Village({
   const [roomDraft, setRoomDraft] = useState(room);
   const [copied, setCopied] = useState(false);
   const [clean, setClean] = useState(readClean);
+  const [topHidden, setTopHidden] = useState(readTopHidden);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [call, setCall] = useState<CallState | null>(null);
   const [muted, setMuted] = useState(false);
@@ -396,6 +405,7 @@ function Village({
       worldRef.current?.setJoy(dx / max, -dy / max);
     };
     const down = (e: PointerEvent) => {
+      worldRef.current?.unlockAudio();
       active = true;
       pointer = e.pointerId;
       el.classList.add("is-pressed");
@@ -435,6 +445,7 @@ function Village({
       return !!el?.closest?.("button, input, textarea, a, summary, .vibe-joy, .vibe-hud, .vibe-dock, .vibe-peek, .vibe-topback");
     };
     const down = (e: PointerEvent) => {
+      worldRef.current?.unlockAudio();
       if (e.button !== 0 || blocked(e.target)) return;
       dragging = true;
       pointer = e.pointerId;
@@ -541,6 +552,18 @@ function Village({
     });
   };
 
+  const toggleTop = () => {
+    setTopHidden((value) => {
+      const next = !value;
+      try {
+        localStorage.setItem("vibe-top", next ? "0" : "1");
+      } catch {
+        /* private mode */
+      }
+      return next;
+    });
+  };
+
   const copyLink = async () => {
     const url = new URL(window.location.href);
     url.searchParams.delete("v");
@@ -563,7 +586,7 @@ function Village({
   };
 
   return (
-    <div className="vibe-stage" data-clean={clean ? "true" : "false"}>
+    <div className="vibe-stage" data-clean={clean ? "true" : "false"} data-top={topHidden ? "off" : "on"}>
       <canvas ref={canvasRef} className="vibe-canvas" />
       <button
         type="button"
@@ -577,6 +600,11 @@ function Village({
         {clean ? null : <span>Hide</span>}
       </button>
       <div className="vibe-topcol">
+        {topHidden ? (
+          <button type="button" className="vibe-topback" onClick={toggleTop}>
+            {p2p.joined ? "Live" : "Linking"} · {room}
+          </button>
+        ) : (
         <header className="vibe-hud vibe-glass">
           <p className="vibe-kicker">Shared meadow</p>
           <h1>Vibe Explorer</h1>
@@ -618,7 +646,11 @@ function Village({
               </button>
             </form>
           </details>
+          <button type="button" className="vibe-toplink" onClick={toggleTop}>
+            Fold
+          </button>
         </header>
+        )}
       </div>
 
       <div className="vibe-dock">
