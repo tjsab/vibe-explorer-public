@@ -1406,7 +1406,7 @@ export class VillageWorld {
       const d = Math.hypot(this.px, this.pz);
       if (d > 0.4 && d < 16) this.facing = Math.atan2(-this.px, -this.pz);
     }
-    this.hooks.onToast(this.mode === "quiet" ? "A quiet minute." : "You look up again.");
+    this.hooks.onToast(this.mode === "quiet" ? (this.devotionLeft() > 0 ? "Quiet time is counting." : "A quiet minute.") : "You look up again.");
     this.feed(this.mode === "quiet" ? `${this.name} takes a quiet minute.` : `${this.name} looks up again.`, true);
     this.emitStatus();
   }
@@ -1431,7 +1431,7 @@ export class VillageWorld {
       this.facing = Math.atan2(-best.x, -best.z);
       this.player.position.set(this.px, 0, this.pz);
     }
-    this.hooks.onToast(best ? "You sit on a log." : "You sit where you are.");
+    this.hooks.onToast(best ? "You sit. Quiet time is counting." : this.devotionLeft() > 0 ? "You sit. Quiet time is counting." : "You sit where you are.");
     this.feed(best ? `${this.name} sits by the fire.` : `${this.name} sits in the grass.`, true);
     this.emitStatus();
   }
@@ -1695,17 +1695,27 @@ export class VillageWorld {
   }
 
   private stepDevotion(dt: number) {
-    if (!this.inDome() || (this.mode !== "sit" && this.mode !== "quiet")) return;
-    if (!this.domeNoted) {
-      this.domeNoted = true;
-      this.hooks.onToast("This is a quiet place. Sit, or just be still.");
-    }
+    const resting = this.mode === "sit" || this.mode === "quiet";
+    if (!resting) return;
+    const before = this.devotionLeft();
+    const shown = Math.floor(this.devoted);
     this.devoted += dt;
     this.devotedSave += dt;
+    const after = this.devotionLeft();
+    if (before > 0 && after === 0) {
+      const next = RANKS[Math.min(RANKS.length - 1, this.rankIndex() + 1)];
+      const helpShort = this.rankIndex() < RANKS.length - 1 && this.unspent() < next.cost - this.spent;
+      this.hooks.onToast(helpShort ? "That's enough quiet. Help a few more times, then take the next step." : "That's enough quiet. You can take the next step.");
+    }
+    if (Math.floor(this.devoted) !== shown) this.emitStatus();
     if (this.devotedSave < 12) return;
     this.devotedSave = 0;
     this.persistRoom();
-    this.emitStatus();
+  }
+
+  private devotionLeft() {
+    if (this.rankIndex() >= RANKS.length - 1) return 0;
+    return Math.max(0, RANKS[this.rankIndex() + 1].devotion - this.devoted);
   }
 
   private nearMarket() {

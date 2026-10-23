@@ -572,6 +572,23 @@
   }
 }
 
+.vibe-timer {
+  margin: 0 0 6px;
+  align-self: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-ink) 72%, transparent);
+  color: var(--color-cream);
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.vibe-timer[data-on="true"] {
+  background: var(--color-amber);
+  color: var(--color-ink);
+}
+
 .vibe-groups {
   display: flex;
   gap: 6px;

@@ -763,10 +763,12 @@ function Village({
                 </p>
                 <p>
                   {status.devotionNeed > 0
-                    ? `Sit quietly for ${Math.round(status.devotionNeed / 60) <= 1 ? "about a minute" : `about ${Math.round(status.devotionNeed / 60)} minutes`} to go further.`
-                    : status.nextCost === 0
-                      ? "You've sat long enough. Call people over, or just be here."
-                      : "You've sat long enough for this step."}
+                    ? `${status.sitting || status.quiet ? "Counting. " : "Sit or be still. "}${Math.floor(status.devotionNeed / 60)}:${String(status.devotionNeed % 60).padStart(2, "0")} left.`
+                    : status.nextCost > 0 && status.ready < status.nextCost
+                      ? `You've sat long enough. Help ${status.nextCost - status.ready} more ${status.nextCost - status.ready === 1 ? "time" : "times"}, then take the next step.`
+                      : status.nextCost === 0
+                        ? "You've sat long enough. Call people over, or just be here."
+                        : "You've sat long enough. You can take the next step."}
                 </p>
                 {status.nextCost > 0 ? (
                   <p>
@@ -803,6 +805,11 @@ function Village({
               {call.phase === "live" ? "Hang up" : "Cancel"}
             </button>
           </div>
+        ) : null}
+        {status.devotionNeed > 0 ? (
+          <p className="vibe-timer" data-on={status.sitting || status.quiet ? "true" : "false"}>
+            {status.sitting || status.quiet ? "Counting" : "Sit or be still"} · {Math.floor(status.devotionNeed / 60)}:{String(status.devotionNeed % 60).padStart(2, "0")}
+          </p>
         ) : null}
         <div className="vibe-groups" role="tablist">
           <button type="button" className="vibe-btn" data-on={group === "do"} onClick={() => setGroup("do")}>Do</button>
