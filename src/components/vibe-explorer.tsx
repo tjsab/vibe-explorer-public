@@ -417,6 +417,7 @@ function Village({
 
   const copyLink = async () => {
     const url = new URL(window.location.href);
+    url.searchParams.delete("v");
     if (room === "village") url.searchParams.delete("room");
     else url.searchParams.set("room", room);
     try {
@@ -673,11 +674,17 @@ export function VibeExplorer() {
     setRoom(readRoom());
     setName(readName());
     setColor(readColor());
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("v")) {
+      url.searchParams.delete("v");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    }
     setReady(true);
   }, []);
 
   const commitRoom = (next: string) => {
     const url = new URL(window.location.href);
+    url.searchParams.delete("v");
     if (next === "village") url.searchParams.delete("room");
     else url.searchParams.set("room", next);
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
