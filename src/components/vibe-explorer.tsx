@@ -215,7 +215,9 @@ function Village({
         setCall({ id: from, name: who, phase: "in" });
         setToast(`${who} wants to talk.`);
       } else if (msg.k === "call-yes") {
+        setToast("Waiting for the microphone…");
         const result = await p2p.beginVoice(from);
+        if (result === "cancelled") return;
         if (result !== "ok") {
           p2p.send({ k: "call-fail", why: result }, from);
           p2p.endVoice();
@@ -243,13 +245,27 @@ function Village({
     });
   }, [p2p, name]);
 
+  const goneAt = useRef(0);
   useEffect(() => {
-    if (!call) return;
-    if (p2p.peers.some((peer) => peer.id === call.id)) return;
-    p2p.endVoice();
-    worldRef.current?.setTalking(call.id, false);
-    setCall(null);
-    setToast("The talk dropped.");
+    if (!call) {
+      goneAt.current = 0;
+      return;
+    }
+    const here = p2p.peers.some((peer) => peer.id === call.id);
+    if (here) {
+      goneAt.current = 0;
+      return;
+    }
+    if (!goneAt.current) goneAt.current = Date.now();
+    const left = 45000 - (Date.now() - goneAt.current);
+    const timer = window.setTimeout(() => {
+      if (p2p.peers.some((peer) => peer.id === call.id)) return;
+      p2p.endVoice();
+      worldRef.current?.setTalking(call.id, false);
+      setCall((current) => (current?.id === call.id ? null : current));
+      setToast("The talk dropped.");
+    }, Math.max(1000, left));
+    return () => window.clearTimeout(timer);
   }, [call, p2p]);
 
   useEffect(() => {
@@ -534,22 +550,25 @@ function Village({
         {call?.phase === "in" ? (
           <article className="vibe-talk vibe-glass">
             <strong>{call.name}</strong>
-            <p>Wants a quiet voice talk. Audio only, about a phone call's worth of data.</p>
+            <p>Wants to talk. Allow the microphone when the phone asks. This will wait.</p>
             <div className="vibe-callrow">
               <button
                 type="button"
                 className="vibe-btn"
                 onClick={() => {
                   const priming = p2p.primeVoice(call.id);
+                  setToast("Allow the microphone. This stays open.");
                   void (async () => {
                     const mic = await priming;
                     if (mic !== "ok") {
                       p2p.send({ k: "call-fail", why: "no-mic" }, call.id);
                       setCall(null);
-                      setToast("Your microphone didn't open. Allow it for the page, then tap Listen.");
+                      setToast("The microphone was blocked. Allow it for the page, then try again.");
                       return;
                     }
+                    setToast("Microphone is on. Connecting the voice…");
                     const result = await p2p.beginVoice(call.id);
+                    if (result === "cancelled") return;
                     if (result !== "ok") {
                       p2p.send({ k: "call-fail", why: result }, call.id);
                       p2p.endVoice();
@@ -640,17 +659,20 @@ function Village({
                 return;
               }
               const priming = p2p.primeVoice(near.id);
-              void (async () => {
-                const mic = await priming;
-                if (mic !== "ok") {
+              p2p.send({ k: "call", n: name }, near.id);
+              worldRef.current?.announce(`${name} asks ${near.name} to talk.`);
+              setCall({ id: near.id, name: near.name, phase: "out" });
+              setToast(`Waiting for ${near.name} to allow the microphone…`);
+              void priming.then((mic) => {
+                if (mic === "ok") return;
+                setCall((current) => {
+                  if (!current || current.id !== near.id || current.phase === "live") return current;
+                  p2p.send({ k: "call-fail", why: "no-mic" }, near.id);
+                  p2p.endVoice();
                   setToast("Your microphone didn't open. Allow it for the page, then tap Talk.");
-                  return;
-                }
-                p2p.send({ k: "call", n: name }, near.id);
-                worldRef.current?.announce(`${name} asks ${near.name} to talk.`);
-                setCall({ id: near.id, name: near.name, phase: "out" });
-                setToast(`Asking ${near.name}…`);
-              })();
+                  return null;
+                });
+              });
             }}
           >
             <Phone className="size-4" aria-hidden="true" /> {call?.phase === "live" ? "Hang up" : call?.phase === "out" ? "Calling" : "Talk"}

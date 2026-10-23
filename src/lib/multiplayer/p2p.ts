@@ -122,6 +122,7 @@ export class P2PRoom {
   private mic: MediaStream | null = null;
   private micPromise: Promise<"ok" | "no-mic"> | null = null;
   private voicePeer: string | null = null;
+  private voiceEpoch = 0;
   private voiceCtx: AudioContext | null = null;
 
   constructor(opts: P2PRoomOptions) {
@@ -213,22 +214,33 @@ export class P2PRoom {
     return this.micPromise;
   }
 
-  /** Voice only, one person. The mic promise must already have been started from a tap. */
-  async beginVoice(peerId: string): Promise<"ok" | "no-mic" | "not-ready"> {
-    const slot = this.peers.get(peerId);
-    if (!slot || !this.linkUp(slot)) return "not-ready";
-    this.armEar(slot);
+  /** Voice only. Waits through a slow microphone prompt, then keeps trying the path. */
+  async beginVoice(peerId: string): Promise<"ok" | "no-mic" | "not-ready" | "cancelled"> {
+    const epoch = this.voiceEpoch;
+    const slotNow = this.peers.get(peerId);
+    if (slotNow) this.armEar(slotNow);
     const mic = await (this.micPromise ?? this.primeVoice(peerId));
+    if (this.voiceEpoch !== epoch || this.closed) return "cancelled";
     if (mic !== "ok" || !this.mic) return "no-mic";
+    const deadline = Date.now() + 90_000;
+    let slot = this.peers.get(peerId);
+    while ((!slot || !this.linkUp(slot)) && Date.now() < deadline) {
+      if (this.voiceEpoch !== epoch || this.closed) return "cancelled";
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      slot = this.peers.get(peerId);
+      if (slot) this.armEar(slot);
+    }
+    if (this.voiceEpoch !== epoch || this.closed) return "cancelled";
+    if (!slot || !this.linkUp(slot)) return "not-ready";
     const track = this.mic.getAudioTracks().find((item) => item.readyState === "live");
     if (!track) return "no-mic";
     try {
-      if (this.voicePeer && this.voicePeer !== peerId) this.endVoice();
       this.voicePeer = peerId;
       track.enabled = true;
       const transceiver = this.voiceTransceiver(slot);
       if (transceiver.direction !== "sendrecv") transceiver.direction = "sendrecv";
       await transceiver.sender.replaceTrack(track);
+      if (this.voiceEpoch !== epoch) return "cancelled";
       slot.audioSender = transceiver.sender;
       if (slot.incoming) this.hear(slot, slot.incoming);
       return "ok";
@@ -238,6 +250,7 @@ export class P2PRoom {
   }
 
   endVoice() {
+    this.voiceEpoch += 1;
     const id = this.voicePeer;
     this.voicePeer = null;
     const slot = id ? this.peers.get(id) : undefined;

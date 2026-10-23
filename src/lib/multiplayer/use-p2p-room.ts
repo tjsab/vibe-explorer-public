@@ -17,7 +17,7 @@ export interface P2PRoomHandle {
   joined: boolean;
   broadcast: (data: unknown) => void;
   send: (data: unknown, peerId?: string) => void;
-  beginVoice: (peerId: string) => Promise<"ok" | "no-mic" | "not-ready">;
+  beginVoice: (peerId: string) => Promise<"ok" | "no-mic" | "not-ready" | "cancelled">;
   primeVoice: (peerId: string) => Promise<"ok" | "no-mic">;
   endVoice: () => void;
   setName: (name: string) => void;
