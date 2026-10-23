@@ -182,6 +182,8 @@ function Village({
     singing: false,
     sitting: false,
     quiet: false,
+    swimming: false,
+    stroke: "Breaststroke",
     nearby: "",
     tasks: [],
   });
@@ -848,6 +850,9 @@ function Village({
               </button>
               <button type="button" className="vibe-btn" data-on={status.sitting} aria-pressed={status.sitting} onClick={() => worldRef.current?.doSit()}>
                 <Armchair className="size-4" aria-hidden="true" /> Sit
+              </button>
+              <button type="button" className="vibe-btn" data-on={status.swimming} onClick={() => worldRef.current?.doStroke()}>
+                Stroke
               </button>
               {!call && worldRef.current?.nearestRemote(4.6) ? (
                 <button type="button" className="vibe-btn" onClick={startTalk}>

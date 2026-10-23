@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-export type Action = "idle" | "walk" | "dance" | "sit" | "quiet" | "sing" | "wave" | "eat";
+export type Action = "idle" | "walk" | "dance" | "sit" | "quiet" | "sing" | "wave" | "eat" | "swim";
 
 export type PoseMsg = {
   k: "pose";
@@ -44,6 +44,8 @@ export type Status = {
   singing: boolean;
   sitting: boolean;
   quiet: boolean;
+  swimming: boolean;
+  stroke: string;
   nearby: string;
   tasks: TaskView[];
 };
@@ -405,6 +407,29 @@ function animateAvatar(group: THREE.Object3D, action: Action, elapsed: number) {
   } else if (action === "eat") {
     armR.rotation.x = -1.45;
     pivot.rotation.x = 0.2;
+  } else if (action === "swim") {
+    const stroke = (group.userData.stroke as string) || "breast";
+    const rate = stroke === "crawl" ? 7.2 : stroke === "back" ? 3.1 : stroke === "tread" ? 2.4 : 4.4;
+    const s = Math.sin(elapsed * rate);
+    pivot.rotation.x = stroke === "back" ? -0.75 : stroke === "tread" ? 0.2 : 0.9;
+    pivot.position.y = (stroke === "back" ? -0.15 : -0.42) + s * 0.05;
+    if (stroke === "breast") {
+      const reach = Math.max(0, s);
+      armL.rotation.x = -0.2 - reach * 1.5;
+      armR.rotation.x = -0.2 - reach * 1.5;
+      armL.rotation.z = 0.4 - reach * 0.5;
+      armR.rotation.z = -0.4 + reach * 0.5;
+    } else if (stroke === "back") {
+      armL.rotation.x = -2.2 + s * 0.8;
+      armR.rotation.x = -2.2 - s * 0.8;
+    } else if (stroke === "tread") {
+      armL.rotation.x = 0.5 + s * 0.45;
+      armR.rotation.x = 0.5 - s * 0.45;
+    } else {
+      armL.rotation.x = s * 1.35;
+      armR.rotation.x = -s * 1.35;
+      pivot.rotation.z = s * 0.12;
+    }
   }
   if (rig.chatUntil > 0 && elapsed > rig.chatUntil) {
     rig.chat.visible = false;
@@ -725,6 +750,9 @@ export class VillageWorld {
   private boat = { x: 49, z: 5, r: 0.2 };
   private boatGroup: THREE.Group | null = null;
   private sailing = false;
+  private stroke: "tread" | "breast" | "crawl" | "back" = "breast";
+  private splashClock = 0;
+  private readonly drops: { mesh: THREE.Mesh; vx: number; vy: number; vz: number; life: number }[] = [];
   private boarded = 0;
   private readonly wake: THREE.Mesh[] = [];
   private name: string;
@@ -2100,6 +2128,7 @@ export class VillageWorld {
     if (this.mode === "sing") return "sing";
     if (this.mode === "quiet") return "quiet";
     if (this.mode === "sit") return "sit";
+    if (this.wetKind() !== "land") return "swim";
     return moving ? "walk" : "idle";
   }
 
@@ -2125,6 +2154,8 @@ export class VillageWorld {
       singing: this.mode === "sing",
       sitting: this.mode === "sit",
       quiet: this.mode === "quiet",
+      swimming: this.wetKind() !== "land",
+      stroke: this.strokeLabel(),
       nearby: this.nearby,
       tasks: this.taskViews(),
     };
@@ -2207,6 +2238,71 @@ export class VillageWorld {
     }
   }
 
+  private waveHeight(x: number, z: number) {
+    return (
+      Math.sin(x * 0.16 + this.elapsed * 1.15) * 0.22 +
+      Math.cos(z * 0.11 + this.elapsed * 0.85) * 0.14 +
+      Math.sin((x * 0.07 + z * 0.09) + this.elapsed * 1.7) * 0.06
+    );
+  }
+
+  private inSea(x: number, z: number) {
+    if (this.islands.some((i) => Math.hypot(x - i.x, z - i.z) < i.r - 0.85)) return false;
+    return x > 51 && x < 170 && z > -80 && z < 80;
+  }
+
+  private wetKind(): "land" | "pond" | "sea" {
+    if (this.sailing) return "land";
+    if (Math.hypot(this.px - this.pond.x, this.pz - this.pond.z) < this.pond.r - 1.15) return "pond";
+    if (this.inSea(this.px, this.pz)) return "sea";
+    return "land";
+  }
+
+  private strokeLabel() {
+    if (this.stroke === "tread") return "Treading water";
+    if (this.stroke === "crawl") return "Front crawl";
+    if (this.stroke === "back") return "Backstroke";
+    return "Breaststroke";
+  }
+
+  doStroke() {
+    const order = ["breast", "crawl", "back", "tread"] as const;
+    this.stroke = order[(order.indexOf(this.stroke) + 1) % order.length];
+    this.player.userData.stroke = this.stroke;
+    this.hooks.onToast(this.strokeLabel());
+    this.emitStatus();
+  }
+
+  private burst(x: number, z: number, count: number) {
+    const y = this.wetKind() === "sea" ? this.waveHeight(x, z) + 0.05 : 0.08;
+    let made = 0;
+    for (const drop of this.drops) {
+      if (drop.life > 0) continue;
+      drop.life = 0.55 + Math.random() * 0.25;
+      drop.vx = (Math.random() - 0.5) * 2.2;
+      drop.vz = (Math.random() - 0.5) * 2.2;
+      drop.vy = 1.6 + Math.random() * 1.3;
+      drop.mesh.position.set(x + (Math.random() - 0.5) * 0.35, y, z + (Math.random() - 0.5) * 0.35);
+      drop.mesh.visible = true;
+      made += 1;
+      if (made >= count) break;
+    }
+  }
+
+  private stepDrops(dt: number) {
+    for (const drop of this.drops) {
+      if (drop.life <= 0) continue;
+      drop.life -= dt;
+      drop.vy -= 5.2 * dt;
+      drop.mesh.position.x += drop.vx * dt;
+      drop.mesh.position.y += drop.vy * dt;
+      drop.mesh.position.z += drop.vz * dt;
+      const mat = drop.mesh.material as THREE.MeshBasicMaterial;
+      mat.opacity = Math.max(0, drop.life * 1.4);
+      if (drop.life <= 0) drop.mesh.visible = false;
+    }
+  }
+
   private resolve(x: number, z: number, radius: number) {
     for (let n = 0; n < 2; n += 1) {
       for (const c of this.colliders) {
@@ -2227,7 +2323,14 @@ export class VillageWorld {
     }
     this.resolved.x = Math.max(-WORLD, Math.min(WORLD, x));
     this.resolved.z = Math.max(-WORLD, Math.min(WORLD, z));
-    const isle = this.islands.find((i) => Math.hypot(this.px - i.x, this.pz - i.z) < i.r + 0.4);
+    if (this.inSea(x, z)) {
+      this.resolved.x = Math.max(48, Math.min(168, x));
+      this.resolved.z = Math.max(-78, Math.min(78, z));
+    } else if (this.inSea(this.px, this.pz)) {
+      this.resolved.x = x;
+      this.resolved.z = z;
+    }
+    const isle = this.islands.find((i) => Math.hypot(x - i.x, z - i.z) < i.r + 0.2 || Math.hypot(this.px - i.x, this.pz - i.z) < i.r + 0.2);
     if (isle) {
       const d = Math.hypot(x - isle.x, z - isle.z);
       const limit = isle.r - 0.7;
@@ -2278,7 +2381,7 @@ export class VillageWorld {
       this.sailing = true;
       this.boarded = this.elapsed;
       this.mode = null;
-      this.hooks.onToast("You're on the boat. Steer out. Ease off at a beach to step off.");
+      this.hooks.onToast("You're on the boat. Steer out. Pull back at a beach to step off.");
       this.feed(`${this.name} takes the boat out.`, true);
     }
     if (this.sailing) {
@@ -2298,7 +2401,7 @@ export class VillageWorld {
       this.facing = this.boat.r;
       this.speed = Math.abs(sp);
       const home = this.boat.x < 47 && Math.abs(this.boat.z) < 28;
-      if (this.elapsed - this.boarded > 1.4 && go < 0.12 && (isle || home)) {
+      if (this.elapsed - this.boarded > 1.2 && sz < -0.45 && (isle || home)) {
         this.sailing = false;
         if (isle) {
           const a = Math.atan2(this.boat.z - isle.z, this.boat.x - isle.x);
@@ -2312,21 +2415,29 @@ export class VillageWorld {
         this.feed(`${this.name} steps onto the sand.`, true);
       }
     } else {
-    const inWater = Math.hypot(this.px - this.pond.x, this.pz - this.pond.z) < this.pond.r - 0.35;
+    const wet = this.wetKind();
     if (movingInput) {
       const clamped = Math.min(mag, 1);
       const nx = ix / mag;
       const nz = iz / mag;
-      const pace = WALK_SPEED * (inWater ? 0.42 : 1);
+      const pace = wet === "land" ? WALK_SPEED : this.stroke === "crawl" ? 4.3 : this.stroke === "breast" ? 3.1 : this.stroke === "back" ? 2.5 : 1.15;
       const nx1 = this.px + nx * pace * clamped * dt;
       const nz1 = this.pz + nz * pace * clamped * dt;
       this.resolve(nx1, nz1, 0.45);
       this.px = this.resolved.x;
       this.pz = this.resolved.z;
       this.facing = Math.atan2(nx, nz);
-      this.speed = WALK_SPEED * clamped;
+      this.speed = pace * clamped;
     } else {
       this.speed = 0;
+    }
+    if (wet !== "land") {
+      this.splashClock -= dt;
+      const period = this.stroke === "crawl" ? 0.38 : this.stroke === "breast" ? 0.8 : this.stroke === "back" ? 1 : 1.35;
+      if (this.splashClock <= 0 && (movingInput || this.stroke === "tread")) {
+        this.splashClock = period;
+        this.burst(this.px, this.pz, this.stroke === "tread" ? 2 : 5);
+      }
     }
     }
     const fx = Math.sin(this.facing);
@@ -2334,19 +2445,21 @@ export class VillageWorld {
     this.yaw = Math.atan2(-fx, -fz);
 
     const action = this.currentAction(movingInput);
-    const pondD = Math.hypot(this.px - this.pond.x, this.pz - this.pond.z);
-    const swimming = pondD < this.pond.r - 0.35;
-    if (swimming && !this.swimming) this.feed(`${this.name} just jumped in the pond for a swim.`, true);
+    const wetNow = this.wetKind();
+    const swimming = wetNow !== "land";
+    if (swimming && !this.swimming) this.feed(`${this.name} slips into the water.`, true);
     this.swimming = swimming;
+    const bob = swimming ? this.waveHeight(this.px, this.pz) * (wetNow === "sea" ? 1 : 0.15) - 0.22 + Math.sin(this.elapsed * 3.2) * 0.04 : 0;
+    this.player.userData.stroke = this.stroke;
     this.player.position.set(
       this.px,
-      this.sailing ? 0.42 + Math.sin(this.elapsed * 1.6) * 0.05 : swimming ? -0.06 + Math.sin(this.elapsed * 2.2) * 0.025 : 0,
+      this.sailing ? this.waveHeight(this.boat.x, this.boat.z) + 0.35 : bob,
       this.pz,
     );
     this.player.rotation.y = this.facing;
     animateAvatar(this.player, this.sailing ? "sit" : action, this.elapsed);
     if (this.boatGroup) {
-      this.boatGroup.position.set(this.boat.x, 0.12 + Math.sin(this.elapsed * 1.5) * 0.07, this.boat.z);
+      this.boatGroup.position.set(this.boat.x, this.waveHeight(this.boat.x, this.boat.z) + 0.08, this.boat.z);
       this.boatGroup.rotation.y = this.boat.r;
       this.boatGroup.rotation.z = Math.sin(this.elapsed * 1.3) * 0.04;
       this.wake.forEach((foam, i) => {
@@ -2390,6 +2503,7 @@ export class VillageWorld {
     this.stepFlies();
     this.stepBirds(dt);
     this.stepButterflies();
+    this.stepDrops(dt);
     this.stepClouds();
     this.stepLilies();
     this.syncCrops();
@@ -2429,7 +2543,8 @@ export class VillageWorld {
     else if (cow && cow.until <= Date.now()) next = "A cow is close. You can take milk.";
     else if (hen && hen.until <= Date.now()) next = "A hen is close. You can gather an egg.";
     else if (this.nearMarket()) next = `Market · greens ${this.marketFood}, milk ${this.stallMilk}, eggs ${this.stallEggs}.`;
-    else if (this.sailing) next = "Steer with the stick. Ease off at a beach to step off.";
+    else if (this.sailing) next = "Steer with the stick. Pull back at a beach to step off.";
+    else if (this.wetKind() !== "land") next = `${this.strokeLabel()}. Tap Stroke to change how you swim.`;
     else if (Math.hypot(this.px - this.boat.x, this.pz - this.boat.z) < 4) next = "A boat is on the beach. Walk into it.";
     else if (this.inDome()) next = "This is the quiet place. Sit or be still.";
     else if (person) next = `${person.name} is here. Tap them to wave.`;
@@ -2874,29 +2989,41 @@ export class VillageWorld {
         vertexShader: `
           uniform float uTime;
           varying float vH;
-          varying vec2 vUv;
+          varying vec3 vN;
+          varying vec3 vWorld;
           void main() {
             vec3 p = position;
-            float w = sin(p.x * 0.16 + uTime * 1.15) * 0.22 + cos(p.z * 0.11 + uTime * 0.85) * 0.16;
-            p.y += w;
-            vH = w;
-            vUv = uv;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+            float w1 = sin(p.x * 0.16 + uTime * 1.15);
+            float w2 = cos(p.z * 0.11 + uTime * 0.85);
+            float w3 = sin(p.x * 0.07 + p.z * 0.09 + uTime * 1.7);
+            float h = w1 * 0.22 + w2 * 0.14 + w3 * 0.06;
+            p.y += h;
+            float dx = cos(p.x * 0.16 + uTime * 1.15) * 0.035 + cos(p.x * 0.07 + p.z * 0.09 + uTime * 1.7) * 0.004;
+            float dz = -sin(p.z * 0.11 + uTime * 0.85) * 0.015 + cos(p.x * 0.07 + p.z * 0.09 + uTime * 1.7) * 0.005;
+            vN = normalize(vec3(-dx, 1.0, -dz));
+            vH = h;
+            vec4 world = modelMatrix * vec4(p, 1.0);
+            vWorld = world.xyz;
+            gl_Position = projectionMatrix * viewMatrix * world;
           }
         `,
         fragmentShader: `
           varying float vH;
-          varying vec2 vUv;
+          varying vec3 vN;
+          varying vec3 vWorld;
           void main() {
-            vec3 deep = vec3(0.05, 0.36, 0.46);
-            vec3 mid = vec3(0.12, 0.58, 0.62);
-            vec3 foam = vec3(0.93, 0.96, 0.94);
-            float crest = smoothstep(0.12, 0.24, vH);
-            vec3 col = mix(mid, deep, smoothstep(0.0, 0.55, vUv.x));
-            col = mix(col, foam, crest * 0.7);
-            float shore = smoothstep(0.07, 0.0, vUv.x);
-            col = mix(col, foam, shore * 0.85);
-            gl_FragColor = vec4(col, 0.94);
+            vec3 deep = vec3(0.03, 0.28, 0.4);
+            vec3 shallow = vec3(0.16, 0.62, 0.64);
+            vec3 foam = vec3(0.94, 0.97, 0.95);
+            vec3 viewDir = normalize(cameraPosition - vWorld);
+            vec3 light = normalize(vec3(-0.35, 0.86, 0.28));
+            float fres = pow(1.0 - clamp(dot(normalize(vN), viewDir), 0.0, 1.0), 3.0);
+            float spec = pow(max(dot(reflect(-light, normalize(vN)), viewDir), 0.0), 64.0);
+            vec3 col = mix(deep, shallow, fres * 0.65 + 0.12);
+            col += vec3(1.0, 0.96, 0.88) * spec * 0.75;
+            float crest = smoothstep(0.16, 0.28, vH);
+            col = mix(col, foam, crest * 0.72);
+            gl_FragColor = vec4(col, 0.95);
           }
         `,
       }),
@@ -2967,6 +3094,13 @@ export class VillageWorld {
       foam.rotation.x = -Math.PI / 2;
       this.wake.push(foam);
       this.scene.add(foam);
+    }
+    const dropMat = new THREE.MeshBasicMaterial({ color: 0xe9f7f8, transparent: true, opacity: 0, depthWrite: false });
+    for (let i = 0; i < 28; i += 1) {
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 5), dropMat.clone());
+      mesh.visible = false;
+      this.scene.add(mesh);
+      this.drops.push({ mesh, vx: 0, vy: 0, vz: 0, life: 0 });
     }
   }
 
