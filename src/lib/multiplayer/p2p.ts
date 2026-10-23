@@ -74,6 +74,8 @@ interface PeerSlot {
   pingSentAt?: number;
   audioSender?: RTCRtpSender;
   playback?: HTMLAudioElement;
+  voiceIn?: MediaStreamAudioSourceNode;
+  incoming?: MediaStream;
 }
 
 const FAST_POLL_MS = 400;
@@ -90,27 +92,6 @@ export function rtcBase(): string {
 }
 const MAX_RECOVERY_ATTEMPTS = 3;
 const SIGNAL_RETRY_DELAYS_MS = [250, 750];
-
-export function leanVoice(desc: RTCSessionDescriptionInit): RTCSessionDescriptionInit {
-  if (!desc.sdp) return desc;
-  const map = desc.sdp.match(/a=rtpmap:(\d+) opus\/48000(?:\/2)?/i);
-  if (!map) return desc;
-  const pt = map[1];
-  const extra = "maxaveragebitrate=16000;stereo=0;sprop-stereo=0;usedtx=1";
-  const fmtp = new RegExp(`a=fmtp:${pt} ([^\\r\\n]+)`);
-  let sdp = desc.sdp;
-  if (fmtp.test(sdp)) {
-    sdp = sdp.replace(fmtp, (_all, params: string) =>
-      params.includes("maxaveragebitrate") ? `a=fmtp:${pt} ${params}` : `a=fmtp:${pt} ${params};${extra}`,
-    );
-  } else {
-    sdp = sdp.replace(
-      new RegExp(`a=rtpmap:${pt} opus/48000(?:/2)?`, "i"),
-      (line) => `${line}\r\na=fmtp:${pt} ${extra}`,
-    );
-  }
-  return { type: desc.type, sdp };
-}
 
 export function defaultIceServers(): RTCIceServer[] {
   const urls = (import.meta.env.VITE_STUN_URLS as string | undefined)
@@ -140,7 +121,7 @@ export class P2PRoom {
   private lastPeersFingerprint = "";
   private mic: MediaStream | null = null;
   private voicePeer: string | null = null;
-  private speaker: HTMLAudioElement | null = null;
+  private voiceCtx: AudioContext | null = null;
 
   constructor(opts: P2PRoomOptions) {
     this.opts = opts;
@@ -168,6 +149,8 @@ export class P2PRoom {
   close(): void {
     this.closed = true;
     this.endVoice();
+    void this.voiceCtx?.close().catch(() => undefined);
+    this.voiceCtx = null;
     if (this.pollTimer) clearTimeout(this.pollTimer);
     if (this.pingTimer) clearInterval(this.pingTimer);
     for (const slot of this.peers.values()) slot.pc.close();
@@ -199,23 +182,21 @@ export class P2PRoom {
     }
   }
 
-  /** Voice only, one person, about 16 kbps while you talk and almost nothing in the pauses. */
+  setName(name: string) {
+    const clean = name.replace(/\s+/g, " ").trim().slice(0, 24);
+    if (!clean) return;
+    this.opts.name = clean;
+  }
+
+  /** Voice only, one person. The audio line is opened with the room, then the mic is attached. */
   async beginVoice(peerId: string): Promise<"ok" | "no-mic" | "not-ready"> {
     const slot = this.peers.get(peerId);
     if (!slot || slot.info.connectionState !== "connected") return "not-ready";
-    this.unlockSpeaker();
+    this.armEar(slot);
     if (!navigator.mediaDevices?.getUserMedia) return "no-mic";
     try {
       if (!this.mic) {
-        this.mic = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
-        });
+        this.mic = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       }
     } catch {
       return "no-mic";
@@ -225,8 +206,19 @@ export class P2PRoom {
     if (this.voicePeer && this.voicePeer !== peerId) this.endVoice();
     this.voicePeer = peerId;
     track.enabled = true;
-    if (!slot.audioSender) slot.audioSender = slot.pc.addTrack(track, this.mic);
-    else await slot.audioSender.replaceTrack(track);
+    const transceiver = this.voiceTransceiver(slot);
+    transceiver.direction = "sendrecv";
+    await transceiver.sender.replaceTrack(track);
+    slot.audioSender = transceiver.sender;
+    try {
+      const params = transceiver.sender.getParameters();
+      if (!params.encodings?.length) params.encodings = [{}];
+      params.encodings[0].maxBitrate = 24000;
+      await transceiver.sender.setParameters(params);
+    } catch {
+      /* a phone may refuse bitrate hints; the mic still sends */
+    }
+    if (slot.incoming) this.hear(slot, slot.incoming);
     return "ok";
   }
 
@@ -237,39 +229,76 @@ export class P2PRoom {
     if (slot?.audioSender) void slot.audioSender.replaceTrack(null);
     this.mic?.getTracks().forEach((track) => track.stop());
     this.mic = null;
-    if (slot?.playback) {
+    this.quiet(slot);
+  }
+
+  private armEar(slot: PeerSlot) {
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (Ctx) {
+      if (!this.voiceCtx) this.voiceCtx = new Ctx();
+      void this.voiceCtx.resume().then(() => {
+        if (slot.incoming) this.hear(slot, slot.incoming);
+      }).catch(() => undefined);
+    }
+    if (!slot.playback && typeof Audio !== "undefined") {
+      const audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.setAttribute("playsinline", "true");
+      audio.volume = 1;
+      audio.style.display = "none";
+      document.body.appendChild(audio);
+      slot.playback = audio;
+      void audio.play().catch(() => undefined);
+    }
+  }
+
+  private hear(slot: PeerSlot, stream: MediaStream) {
+    slot.incoming = stream;
+    const ctx = this.voiceCtx;
+    if (ctx && ctx.state === "running") {
+      void ctx.resume().catch(() => undefined);
+      try {
+        slot.voiceIn?.disconnect();
+      } catch {
+        /* already disconnected */
+      }
+      const src = ctx.createMediaStreamSource(stream);
+      src.connect(ctx.destination);
+      slot.voiceIn = src;
+      if (slot.playback) slot.playback.srcObject = null;
+      return;
+    }
+    const audio = slot.playback;
+    if (!audio) return;
+    if (audio.srcObject !== stream) audio.srcObject = stream;
+    void audio.play().catch(() => undefined);
+  }
+
+  private quiet(slot?: PeerSlot) {
+    if (!slot) return;
+    try {
+      slot.voiceIn?.disconnect();
+    } catch {
+      /* already disconnected */
+    }
+    slot.voiceIn = undefined;
+    slot.incoming = undefined;
+    if (slot.playback) {
       slot.playback.pause();
       slot.playback.srcObject = null;
     }
   }
 
-  private unlockSpeaker() {
-    if (typeof Audio === "undefined") return;
-    this.speaker ??= new Audio();
-    this.speaker.autoplay = true;
-    void this.speaker.play().catch(() => undefined);
-  }
-
-  private hear(slot: PeerSlot, stream: MediaStream) {
-    if (typeof Audio === "undefined") return;
-    const audio = slot.playback ?? new Audio();
-    audio.autoplay = true;
-    audio.srcObject = stream;
-    slot.playback = audio;
-    void audio.play().catch(() => undefined);
+  private voiceTransceiver(slot: PeerSlot): RTCRtpTransceiver {
+    const found = slot.pc.getTransceivers().find((t) => t.receiver.track?.kind === "audio" || t.sender.track?.kind === "audio");
+    if (found) return found;
+    return slot.pc.addTransceiver("audio", { direction: "sendrecv" });
   }
 
   private async publishLocal(pc: RTCPeerConnection) {
     await pc.setLocalDescription();
-    const desc = pc.localDescription;
-    if (!desc?.sdp) return;
-    const leaned = leanVoice(desc);
-    if (!leaned.sdp || leaned.sdp === desc.sdp) return;
-    try {
-      await pc.setLocalDescription(leaned);
-    } catch {
-      /* the original description still stands */
-    }
   }
 
   peerList(): PeerInfo[] {
@@ -418,15 +447,16 @@ export class P2PRoom {
     pc.ondatachannel = (e) => this.attachChannel(slot, e.channel);
     pc.ontrack = (e) => {
       if (e.track.kind !== "audio") return;
-      const stream = e.streams[0] ?? new MediaStream([e.track]);
-      this.hear(slot, stream);
-      e.track.onended = () => {
-        if (slot.playback?.srcObject === stream) slot.playback.srcObject = null;
-      };
+      const stream = e.streams[0]?.getAudioTracks().length ? e.streams[0] : new MediaStream([e.track]);
+      const play = () => this.hear(slot, stream);
+      e.track.onunmute = play;
+      e.track.onended = () => this.quiet(slot);
+      play();
     };
 
     if (initiator) {
-      // Creating the channels triggers negotiationneeded → the offer.
+      // An audio section from the start, so a later talk does not have to rebuild the room.
+      slot.audioSender = pc.addTransceiver("audio", { direction: "sendrecv" }).sender;
       this.attachChannel(
         slot,
         pc.createDataChannel("state", { ordered: false, maxRetransmits: 0 }),

@@ -95,10 +95,10 @@ type Remote = {
 type Collider = { x: number; z: number; r: number };
 
 export function asAnon(raw: string, salt = ""): string {
-  const clean = raw.trim().slice(0, 24);
-  if (/^Anon \d{4}$/.test(clean)) return clean;
+  const clean = raw.replace(/\s+/g, " ").trim().slice(0, 24);
+  if (clean && !/[\u0000-\u001f\u007f]/.test(clean)) return clean;
   let h = 2166136261;
-  const s = `${salt}:${clean}`;
+  const s = salt || "meadow";
   for (let i = 0; i < s.length; i += 1) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return `Anon ${1000 + (Math.abs(h) % 9000)}`;
 }
@@ -584,7 +584,7 @@ export class VillageWorld {
   private firePos: Float32Array;
   private flyPos: Float32Array;
   private pond = { x: 20, z: -10, r: 8.15 };
-  private readonly name: string;
+  private name: string;
   private readonly color: number;
   private readonly roomId: string;
   private onKeyDown: (e: KeyboardEvent) => void;
@@ -781,6 +781,19 @@ export class VillageWorld {
     };
   }
 
+  setName(next: string) {
+    const clean = next.replace(/\s+/g, " ").trim().slice(0, 24);
+    if (!clean || clean === this.name) return;
+    const earned = this.scores.get(this.name) ?? 0;
+    if (earned > 0) {
+      this.scores.delete(this.name);
+      this.scores.set(clean, Math.max(this.scores.get(clean) ?? 0, earned));
+    }
+    this.name = clean;
+    this.persistRoom();
+    this.refreshBoard();
+  }
+
   getCropSnapshot(): CropSnap[] {
     const now = Date.now();
     return this.crops.filter((c) => c.until > now).map((c) => ({ id: c.id, until: c.until }));
@@ -832,8 +845,8 @@ export class VillageWorld {
     remote.action = pose.a;
     if (remote.name !== shown) {
       remote.name = shown;
-      const label = remote.group.children.find((c) => c instanceof THREE.Sprite && c !== (remote.group.userData.rig as Rig).chat);
-      if (label instanceof THREE.Sprite) setSprite(label, remote.name);
+      const plate = remote.group.getObjectByName("nameplate");
+      if (plate instanceof THREE.Sprite) setSprite(plate, remote.name);
       placeLiveDot(remote.group, remote.name);
     }
   }

@@ -19,6 +19,7 @@ export interface P2PRoomHandle {
   send: (data: unknown, peerId?: string) => void;
   beginVoice: (peerId: string) => Promise<"ok" | "no-mic" | "not-ready">;
   endVoice: () => void;
+  setName: (name: string) => void;
   onMessage: (
     fn: (from: string, data: unknown, channel: "state" | "reliable") => void,
   ) => () => void;
@@ -66,6 +67,7 @@ export function useP2PRoom(options: UseP2PRoomOptions = {}): P2PRoomHandle {
     [],
   );
   const endVoice = useCallback(() => roomRef.current?.endVoice(), []);
+  const setName = useCallback((next: string) => roomRef.current?.setName(next), []);
   const onMessage = useCallback(
     (fn: (from: string, data: unknown, channel: "state" | "reliable") => void) => {
       listeners.current.add(fn);
@@ -76,5 +78,5 @@ export function useP2PRoom(options: UseP2PRoomOptions = {}): P2PRoomHandle {
     [],
   );
 
-  return { selfId, room, peers, joined, broadcast, send, beginVoice, endVoice, onMessage };
+  return { selfId, room, peers, joined, broadcast, send, beginVoice, endVoice, setName, onMessage };
 }

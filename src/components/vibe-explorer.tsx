@@ -45,8 +45,8 @@ function readRoom() {
 }
 
 function readName() {
-  const saved = sessionStorage.getItem("vibe-name");
-  if (saved && /^Anon \d{4}$/.test(saved)) return saved;
+  const saved = sessionStorage.getItem("vibe-name")?.replace(/\s+/g, " ").trim().slice(0, 24) ?? "";
+  if (saved) return saved;
   const name = `Anon ${Math.floor(1000 + Math.random() * 9000)}`;
   sessionStorage.setItem("vibe-name", name);
   return name;
@@ -172,7 +172,12 @@ function Village({
       world.dispose();
       worldRef.current = null;
     };
-  }, [name, color, room]);
+  }, [color, room]);
+
+  useEffect(() => {
+    worldRef.current?.setName(name);
+    p2p.setName(name);
+  }, [name, p2p.setName]);
 
   useEffect(() => {
     return p2p.onMessage(async (from, data, channel) => {
@@ -690,7 +695,7 @@ export function VibeExplorer() {
     <main className="vibe-root">
       {ready ? (
         <Village
-          key={`${room}:${name}`}
+          key={room}
           room={room}
           name={name}
           color={color}
