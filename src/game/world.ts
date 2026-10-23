@@ -40,6 +40,7 @@ export type Status = {
   nextGift: string;
   devoted: number;
   devotionNeed: number;
+  still: boolean;
   singing: boolean;
   sitting: boolean;
   quiet: boolean;
@@ -596,6 +597,12 @@ export class VillageWorld {
   private cdEggs = 0;
   private devoted = 0;
   private devotedSave = 0;
+  private care = 0;
+  private weight = 0;
+  private still = 0;
+  private stillPoint = false;
+  private hoard = 0;
+  private weightNoted = false;
   private domeNoted = false;
   private readonly scores = new Map<string, number>();
   private board: THREE.Sprite | null = null;
@@ -859,13 +866,84 @@ export class VillageWorld {
   }
 
   private applyRank() {
+    this.applyMood();
+  }
+
+  private chasing() {
+    if (this.stillPoint || this.rankIndex() >= RANKS.length - 1) return false;
+    const next = RANKS[this.rankIndex() + 1];
+    return this.unspent() < next.cost - this.spent;
+  }
+
+  private applyMood() {
     if (!this.player) return;
-    if (this.rankIndex() >= 3 && !this.practiceLight) {
-      this.practiceLight = new THREE.PointLight(0xffd2a0, 1.6, 9);
-      this.practiceLight.position.y = 1.7;
+    const show = this.stillPoint || this.rankIndex() >= 3 || this.care > 3 || this.weight > 3;
+    if (show && !this.practiceLight) {
+      this.practiceLight = new THREE.PointLight(0xffd2a0, 0.4, 8);
+      this.practiceLight.position.y = 1.65;
       this.player.add(this.practiceLight);
     }
-    if (this.practiceLight) this.practiceLight.visible = this.rankIndex() >= 3;
+    if (!this.practiceLight) return;
+    if (this.stillPoint) {
+      this.practiceLight.color.set(0xfff6e8);
+      this.practiceLight.intensity = 0.85;
+      this.practiceLight.distance = 12;
+      this.practiceLight.visible = true;
+      return;
+    }
+    const tilt = this.care - this.weight;
+    this.practiceLight.visible = show;
+    this.practiceLight.distance = 8;
+    this.practiceLight.intensity = Math.max(0.15, Math.min(2.1, 0.35 + tilt * 0.07));
+    this.practiceLight.color.set(tilt < 0 ? 0x9aafc2 : 0xffd2a0);
+  }
+
+  private noteCare(amount: number) {
+    const loose = !this.chasing();
+    this.care = Math.min(36, this.care + (loose ? amount * 1.4 : amount * 0.4));
+    if (loose) this.devoted += amount * 2;
+    if (loose && this.weight > 0) this.weight = Math.max(0, this.weight - amount * 0.35);
+    this.applyMood();
+  }
+
+  private addWeight() {
+    this.weight = Math.min(24, this.weight + 1);
+    this.applyMood();
+    if (this.weightNoted) return;
+    this.weightNoted = true;
+    this.hooks.onToast("That sat a little heavy.");
+  }
+
+  private nearWater() {
+    return Math.hypot(this.px - this.pond.x, this.pz - this.pond.z) < this.pond.r + 2.4;
+  }
+
+  private present() {
+    if (this.mode !== "sit" && this.mode !== "quiet") return false;
+    return this.inDome() || this.nearWater() || this.someoneClose(5.2);
+  }
+
+  private stepStill(dt: number) {
+    const full = this.food + this.milk + this.eggs >= Math.max(4, this.basketCap() - 1);
+    const bare = this.marketFood + this.stallMilk + this.stallEggs === 0;
+    if (full && bare && this.someoneClose(12)) this.hoard += dt;
+    else this.hoard = 0;
+    if (this.hoard > 28) {
+      this.hoard = 0;
+      this.addWeight();
+    }
+    if (this.present()) this.weight = Math.max(0, this.weight - dt * 0.08);
+    this.care = Math.max(0, this.care - dt * 0.004);
+    if (this.stillPoint || this.rankIndex() < RANKS.length - 1 || !this.present()) return;
+    if (this.weight > this.care + 6) return;
+    this.still += dt;
+    if (this.still < 120) return;
+    this.stillPoint = true;
+    this.persistRoom();
+    this.applyMood();
+    this.hooks.onToast("Nothing to climb. You are already here.");
+    this.feed(`${this.name} grows quiet.`, true);
+    this.emitStatus();
   }
 
   rise() {
@@ -905,7 +983,8 @@ export class VillageWorld {
 
   private grantPractice(amount: number, line: string) {
     this.addService(this.name, amount);
-    this.hooks.onToast(`${line} Service ${this.service}.`);
+    this.noteCare(amount);
+    if (!this.stillPoint) this.hooks.onToast(line);
     this.feed(`${this.name}: ${line}`, true);
     this.hooks.onMarket?.({ op: "score", p: this.service });
     this.emitStatus();
@@ -1007,9 +1086,19 @@ export class VillageWorld {
     ];
   }
 
+  private feltLine(line: string) {
+    if (this.stillPoint && Math.random() < 0.45) return "You don't have to do anything. I'm glad you stayed.";
+    if (this.care > this.weight + 5 && Math.random() < 0.3) return "It feels easy around you.";
+    if (this.weight > this.care + 6 && Math.random() < 0.35) return "The stall has been thin. No hurry. Just don't forget it.";
+    return line;
+  }
+
   private practiceLine() {
-    const next = RANKS[Math.min(RANKS.length - 1, this.rankIndex() + 1)];
-    if (this.rankIndex() < RANKS.length - 1 && this.unspent() >= next.cost - this.spent) return "You can rise when you want.";
+    if (this.stillPoint) return "Nothing to do. Stay if you like.";
+    if (this.weight > this.care + 4) return "Something feels heavy. Sit a while, or set a little food out.";
+    if (this.rankIndex() >= RANKS.length - 1) return "The names were a way of walking. Sit until even that is quiet.";
+    const next = RANKS[this.rankIndex() + 1];
+    if (this.unspent() >= next.cost - this.spent) return "You can rise when you want. Or just stay.";
     const hints = [
       "Sit beside someone and stay a little while.",
       "Sing until a neighbor is with you.",
@@ -1373,8 +1462,9 @@ export class VillageWorld {
     this.emote = "wave";
     this.emoteUntil = this.elapsed + 1.2;
     this.addService(this.name, 1);
+    this.noteCare(1);
     this.hooks.onToast(`You offer food to ${near.name}.`);
-    this.feed(`${this.name} shares food with ${near.name}. Service ${this.service}.`, true);
+    this.feed(`${this.name} shares food with ${near.name}.`, true);
     this.hooks.onMarket?.({ op: "score", p: this.service });
     this.emitStatus();
     return near;
@@ -1402,6 +1492,7 @@ export class VillageWorld {
     this.stallEggs = Math.min(99, this.stallEggs + eggs);
     const points = greens + milk * 2 + eggs + (wasBare ? 1 : 0);
     this.addService(this.name, points);
+    this.noteCare(Math.max(1, Math.min(4, points)));
     this.persistMarket();
     this.refreshBoard();
     const parts = [
@@ -1410,7 +1501,7 @@ export class VillageWorld {
       eggs ? `${eggs} ${eggs === 1 ? "egg" : "eggs"}` : "",
     ].filter(Boolean);
     this.hooks.onToast(wasBare ? `The stall was bare. You set out ${parts.join(", ")}.` : `You set out ${parts.join(", ")}.`);
-    this.feed(`${this.name} sets ${parts.join(", ")} on the stall. Service ${this.service}.`, true);
+    this.feed(`${this.name} sets ${parts.join(", ")} on the stall.`, true);
     this.hooks.onMarket?.({ op: "give", greens, milk, eggs });
     this.emitStatus();
     return points;
@@ -1447,6 +1538,9 @@ export class VillageWorld {
     this.persistMarket();
     this.refreshBoard();
     const label = good === "greens" ? "greens" : good === "milk" ? "milk" : "an egg";
+    const thin = this.marketFood + this.stallMilk + this.stallEggs === 0;
+    const hands = this.food + this.milk + this.eggs;
+    if (thin && hands > 2) this.addWeight();
     this.hooks.onToast(`You take ${label} from the stall.`);
     this.feed(`${this.name} takes ${label} from the stall.`, true);
     this.hooks.onMarket?.({ op: "take", good });
@@ -1564,6 +1658,10 @@ export class VillageWorld {
       food?: number;
       spent?: number;
       devoted?: number;
+      care?: number;
+      weight?: number;
+      still?: number;
+      stillPoint?: boolean;
       scores?: { n: string; p: number }[];
     } | null = null;
     try {
@@ -1589,6 +1687,13 @@ export class VillageWorld {
     this.spent = Number.isFinite(spent) ? Math.max(0, Math.min(this.service, Math.floor(spent))) : 0;
     const devoted = Number(saved?.devoted ?? 0);
     this.devoted = Number.isFinite(devoted) ? Math.max(0, Math.min(24 * 3600, devoted)) : 0;
+    const care = Number(saved?.care ?? 0);
+    const weight = Number(saved?.weight ?? 0);
+    const still = Number(saved?.still ?? 0);
+    this.care = Number.isFinite(care) ? Math.max(0, Math.min(36, care)) : 0;
+    this.weight = Number.isFinite(weight) ? Math.max(0, Math.min(24, weight)) : 0;
+    this.still = Number.isFinite(still) ? Math.max(0, Math.min(600, still)) : 0;
+    this.stillPoint = saved?.stillPoint === true;
     this.marketFood = Number.isFinite(market) ? Math.max(0, Math.min(99, Math.floor(market))) : 0;
     const stallMilk = Number(saved?.stallMilk ?? 0);
     const stallEggs = Number(saved?.stallEggs ?? 0);
@@ -1626,6 +1731,10 @@ export class VillageWorld {
           eggs: this.eggs,
           food: this.food,
           devoted: Math.floor(this.devoted),
+          care: Math.round(this.care * 10) / 10,
+          weight: Math.round(this.weight * 10) / 10,
+          still: Math.floor(this.still),
+          stillPoint: this.stillPoint,
           scores,
         }),
       );
@@ -1891,6 +2000,7 @@ export class VillageWorld {
       nextGift: this.rankIndex() >= RANKS.length - 1 ? "You can call neighbors to the market." : nextRank.gift,
       devoted: Math.floor(this.devoted),
       devotionNeed: this.rankIndex() >= RANKS.length - 1 ? 0 : Math.max(0, Math.ceil(nextRank.devotion - this.devoted)),
+      still: this.stillPoint,
       singing: this.mode === "sing",
       sitting: this.mode === "sit",
       quiet: this.mode === "quiet",
@@ -1949,7 +2059,7 @@ export class VillageWorld {
         this.hooks.onToast(`Walk closer to ${person.name}.`);
         return;
       }
-      const line = person.lines[person.line % person.lines.length];
+      const line = this.feltLine(person.lines[person.line % person.lines.length]);
       person.line += 1;
       this.hooks.onTalk(person.name, line);
       return;
@@ -2066,6 +2176,7 @@ export class VillageWorld {
     this.stepMeal(gather);
     this.stepPractice(dt);
     this.stepDevotion(dt);
+    this.stepStill(dt);
     this.noteVillagers();
     this.stepCritters(dt);
     this.stepRemotes(dt);
@@ -2183,10 +2294,19 @@ export class VillageWorld {
       const len = Math.hypot(dx, dz);
       let moving = false;
       if (!gather && this.elapsed >= this.tableUntil && p !== this.meal && len < 0.8) {
-        p.tx = p.x + (Math.random() - 0.5) * 14;
-        p.tz = p.z + (Math.random() - 0.5) * 14;
-        p.tx = Math.max(-40, Math.min(40, p.tx));
-        p.tz = Math.max(-40, Math.min(40, p.tz));
+        const near = Math.hypot(p.x - this.px, p.z - this.pz);
+        if (this.care > this.weight + 6 && near < 22 && Math.random() < 0.5) {
+          const ang = Math.random() * Math.PI * 2;
+          p.tx = this.px + Math.sin(ang) * 2.4;
+          p.tz = this.pz + Math.cos(ang) * 2.4;
+        } else if (this.weight > this.care + 8 && near < 12) {
+          const away = Math.atan2(p.x - this.px, p.z - this.pz);
+          p.tx = Math.max(-40, Math.min(40, p.x + Math.sin(away) * 8));
+          p.tz = Math.max(-40, Math.min(40, p.z + Math.cos(away) * 8));
+        } else {
+          p.tx = Math.max(-40, Math.min(40, p.x + (Math.random() - 0.5) * 14));
+          p.tz = Math.max(-40, Math.min(40, p.z + (Math.random() - 0.5) * 14));
+        }
       } else if (len > 0.45) {
         dx /= len;
         dz /= len;

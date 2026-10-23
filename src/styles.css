@@ -250,8 +250,23 @@
   outline-offset: 2px;
 }
 
-.vibe-stage[data-top="off"] .vibe-hud {
-  display: none;
+.vibe-stage[data-still="true"] .vibe-hud {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.vibe-stage[data-still="true"] .vibe-name,
+.vibe-stage[data-still="true"] .vibe-code,
+.vibe-stage[data-still="true"] .vibe-presence,
+.vibe-stage[data-still="true"] .vibe-more {
+  opacity: 0.5;
+}
+
+.vibe-stage[data-still="true"] .vibe-groups,
+.vibe-stage[data-still="true"] .vibe-actions {
+  opacity: 0.62;
 }
 
 .vibe-toplink,
