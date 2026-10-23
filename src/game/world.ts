@@ -14,17 +14,35 @@ export type PoseMsg = {
 
 export type CropSnap = { id: number; until: number };
 
+export type Good = "greens" | "milk" | "eggs";
+
+export type TaskView = {
+  id: string;
+  title: string;
+  detail: string;
+  progress: number;
+  reward: number;
+  state: "ready" | "doing" | "done";
+};
+
 export type Status = {
   food: number;
+  milk: number;
+  eggs: number;
   market: number;
+  stallMilk: number;
+  stallEggs: number;
   service: number;
   ready: number;
   rank: string;
   nextCost: number;
+  nextName: string;
+  nextGift: string;
   singing: boolean;
   sitting: boolean;
   quiet: boolean;
   nearby: string;
+  tasks: TaskView[];
 };
 
 export type WorldHooks = {
@@ -34,7 +52,12 @@ export type WorldHooks = {
   onHarvest: (id: number, until: number) => void;
   onFeed: (line: string, share?: boolean) => void;
   onGreet?: (id: string, name: string) => void;
-  onMarket?: (msg: { op: "give"; qty: number } | { op: "take" } | { op: "score"; p: number }) => void;
+  onMarket?: (
+    msg:
+      | { op: "give"; greens: number; milk: number; eggs: number }
+      | { op: "take"; good: Good }
+      | { op: "score"; p: number },
+  ) => void;
 };
 
 const ACTIONS: Action[] = ["idle", "walk", "dance", "sit", "quiet", "sing", "wave", "eat"];
@@ -87,6 +110,7 @@ type Wanderer = {
   name?: string;
   lines?: string[];
   line: number;
+  until: number;
 };
 
 type Remote = {
@@ -543,7 +567,11 @@ export class VillageWorld {
   private emote: "dance" | "wave" | "eat" | null = null;
   private emoteUntil = 0;
   private food = 0;
+  private milk = 0;
+  private eggs = 0;
   private marketFood = 0;
+  private stallMilk = 0;
+  private stallEggs = 0;
   private service = 0;
   private spent = 0;
   private duty = true;
@@ -558,9 +586,13 @@ export class VillageWorld {
   private cdSong = 0;
   private cdStill = 0;
   private cdWave = 0;
+  private cdMilk = 0;
+  private cdEggs = 0;
   private readonly scores = new Map<string, number>();
   private board: THREE.Sprite | null = null;
   private readonly marketPile: THREE.Mesh[] = [];
+  private readonly eggPile: THREE.Mesh[] = [];
+  private pail: THREE.Mesh | null = null;
   private readonly marketAt = { x: 17.8, z: 7.5 };
   private swimming = false;
   private nextVillagerNote = 3;
@@ -860,7 +892,7 @@ export class VillageWorld {
 
   private callTable() {
     if (this.rankIndex() < RANKS.length - 1) return;
-    if (this.marketFood <= 0) {
+    if (this.marketFood + this.stallMilk + this.stallEggs <= 0) {
       this.hooks.onToast("The stall is empty. Set food out before you call anyone.");
       return;
     }
@@ -886,6 +918,81 @@ export class VillageWorld {
       if (Math.hypot(remote.x - this.px, remote.z - this.pz) <= reach) return true;
     }
     return false;
+  }
+
+  private nextGood(): Good | null {
+    const piles: [Good, number][] = [
+      ["greens", this.marketFood],
+      ["milk", this.stallMilk],
+      ["eggs", this.stallEggs],
+    ];
+    piles.sort((a, b) => b[1] - a[1]);
+    return piles[0][1] > 0 ? piles[0][0] : null;
+  }
+
+  private taskViews(): TaskView[] {
+    const quiet = this.quietFrom?.t ?? 0;
+    const cow = this.nearestCritter("cow", 4.8);
+    const hen = this.nearestCritter("hen", 4.2);
+    const carrying = this.food + this.milk + this.eggs > 0;
+    return [
+      {
+        id: "stall",
+        title: "Keep the stall",
+        detail: "Set greens, milk, or eggs out. Neighbors take them.",
+        progress: carrying && this.nearMarket() ? 1 : carrying ? 0.45 : 0,
+        reward: 1,
+        state: carrying ? "doing" : "ready",
+      },
+      {
+        id: "company",
+        title: "Keep someone company",
+        detail: "Sit beside a person and stay.",
+        progress: Math.min(1, this.sitWith / 14),
+        reward: 2,
+        state: this.elapsed < this.cdCompany ? "done" : this.sitWith > 0 ? "doing" : "ready",
+      },
+      {
+        id: "song",
+        title: "Share a song",
+        detail: "Sing until a neighbor is with you.",
+        progress: Math.min(1, this.sang / 16),
+        reward: 2,
+        state: this.elapsed < this.cdSong ? "done" : this.sang > 0 ? "doing" : "ready",
+      },
+      {
+        id: "quiet",
+        title: "A quiet minute",
+        detail: "Stay quiet without wandering off.",
+        progress: Math.min(1, quiet / 18),
+        reward: 2,
+        state: this.elapsed < this.cdStill ? "done" : quiet > 0 ? "doing" : "ready",
+      },
+      {
+        id: "welcome",
+        title: "Welcome someone",
+        detail: "Wave while a person is near.",
+        progress: this.elapsed < this.cdWave ? 1 : 0,
+        reward: 1,
+        state: this.elapsed < this.cdWave ? "done" : "ready",
+      },
+      {
+        id: "milk",
+        title: "Milk a cow",
+        detail: cow ? "A cow is close." : "The cows graze south of the fire.",
+        progress: this.elapsed < this.cdMilk ? 1 : cow && cow.until <= Date.now() ? 0.5 : 0,
+        reward: 1,
+        state: this.elapsed < this.cdMilk ? "done" : cow ? "doing" : "ready",
+      },
+      {
+        id: "eggs",
+        title: "Gather an egg",
+        detail: hen ? "A hen is close." : "The hens stay by the garden.",
+        progress: this.elapsed < this.cdEggs ? 1 : hen && hen.until <= Date.now() ? 0.5 : 0,
+        reward: 1,
+        state: this.elapsed < this.cdEggs ? "done" : hen ? "doing" : "ready",
+      },
+    ];
   }
 
   private practiceLine() {
@@ -938,16 +1045,20 @@ export class VillageWorld {
       const who = this.meal.name ?? "A neighbor";
       this.meal = null;
       this.nextMeal = this.elapsed + 24 + Math.random() * 16;
-      if (!this.duty || this.marketFood <= 0) return;
-      this.marketFood -= 1;
+      const good = this.nextGood();
+      if (!this.duty || !good) return;
+      if (good === "milk") this.stallMilk -= 1;
+      else if (good === "eggs") this.stallEggs -= 1;
+      else this.marketFood -= 1;
       this.persistMarket();
       this.refreshBoard();
-      this.feed(`${who} takes a meal from the stall.`, true);
-      this.hooks.onMarket?.({ op: "take" });
+      const label = good === "milk" ? "milk" : good === "eggs" ? "an egg" : "greens";
+      this.feed(`${who} takes ${label} from the stall.`, true);
+      this.hooks.onMarket?.({ op: "take", good });
       this.emitStatus();
       return;
     }
-    if (gather || !this.duty || this.marketFood <= 0 || this.elapsed < this.nextMeal) return;
+    if (gather || !this.duty || this.elapsed < this.nextMeal || !this.nextGood()) return;
     const folks = this.people.filter((person) => person.name);
     if (!folks.length) return;
     this.meal = folks[Math.floor(Math.random() * folks.length)];
@@ -1147,17 +1258,88 @@ export class VillageWorld {
   }
 
   doEat() {
-    if (this.food <= 0) {
-      this.hooks.onToast("The basket is empty. The garden is west of the path.");
+    const bite = this.food > 0 ? "greens" : this.milk > 0 ? "milk" : this.eggs > 0 ? "eggs" : null;
+    if (!bite) {
+      this.hooks.onToast("Nothing to eat. Pick, milk, or gather an egg.");
       return;
     }
-    this.food -= 1;
+    if (bite === "greens") this.food -= 1;
+    else if (bite === "milk") this.milk -= 1;
+    else this.eggs -= 1;
     this.persistFood();
     this.emote = "eat";
     this.emoteUntil = this.elapsed + 1.3;
-    this.hooks.onToast("You eat. It's simple, and enough.");
-    this.feed(`${this.name} eats from the basket.`, true);
+    this.hooks.onToast(bite === "milk" ? "You drink a little milk." : bite === "eggs" ? "You eat an egg." : "You eat. It's simple, and enough.");
+    this.feed(`${this.name} eats.`, true);
     this.emitStatus();
+  }
+
+  doMilk() {
+    const cow = this.nearestCritter("cow", 4.8);
+    if (!cow) {
+      this.hooks.onToast("Walk up to a cow. They graze south of the fire.");
+      return;
+    }
+    if (cow.until > Date.now()) {
+      this.hooks.onToast("She needs a little rest before the next pail.");
+      return;
+    }
+    if (this.milk >= 6) {
+      this.hooks.onToast("The pail is full. Set the milk out at the stall.");
+      return;
+    }
+    cow.until = Date.now() + 28_000;
+    this.milk += 1;
+    this.persistFood();
+    if (this.elapsed >= this.cdMilk) {
+      this.cdMilk = this.elapsed + 50;
+      this.grantPractice(1, "You milked a cow.");
+    } else {
+      this.hooks.onToast("You take a little milk.");
+      this.feed(`${this.name} milks a cow.`, true);
+    }
+    this.emitStatus();
+  }
+
+  doEggs() {
+    const hen = this.nearestCritter("hen", 4.2);
+    if (!hen) {
+      this.hooks.onToast("Walk up to a hen. They stay by the garden.");
+      return;
+    }
+    if (hen.until > Date.now()) {
+      this.hooks.onToast("No egg just yet. Give her a minute.");
+      return;
+    }
+    if (this.eggs >= 8) {
+      this.hooks.onToast("Your hands are full of eggs. Set them out at the stall.");
+      return;
+    }
+    hen.until = Date.now() + 20_000;
+    this.eggs += 1;
+    this.persistFood();
+    if (this.elapsed >= this.cdEggs) {
+      this.cdEggs = this.elapsed + 40;
+      this.grantPractice(1, "You gathered an egg.");
+    } else {
+      this.hooks.onToast("You gather an egg.");
+      this.feed(`${this.name} gathers an egg.`, true);
+    }
+    this.emitStatus();
+  }
+
+  private nearestCritter(kind: Wanderer["kind"], reach: number) {
+    let best: Wanderer | null = null;
+    let bestD = reach;
+    for (const animal of this.critters) {
+      if (animal.kind !== kind) continue;
+      const d = Math.hypot(animal.x - this.px, animal.z - this.pz);
+      if (d <= bestD) {
+        best = animal;
+        bestD = d;
+      }
+    }
+    return best;
   }
 
   tryOffer(): { id: string; name: string } | null {
@@ -1187,30 +1369,35 @@ export class VillageWorld {
       this.hooks.onToast("The market is the red stall, east of the fire.");
       return 0;
     }
-    if (this.food <= 0) {
-      if (this.marketFood > 0) return this.takeFromMarket();
-      this.hooks.onToast("The basket is empty. The garden is west.");
+    if (this.food <= 0 && this.milk <= 0 && this.eggs <= 0) {
+      if (this.marketFood + this.stallMilk + this.stallEggs > 0) return this.takeFromMarket();
+      this.hooks.onToast("Nothing to set out. Pick, milk, or gather an egg.");
       return 0;
     }
-    const qty = this.food;
-    const wasBare = this.marketFood === 0;
+    const greens = this.food;
+    const milk = this.milk;
+    const eggs = this.eggs;
+    const wasBare = this.marketFood + this.stallMilk + this.stallEggs === 0;
     this.food = 0;
-    this.persistFood();
-    this.addService(this.name, qty + (wasBare ? 1 : 0));
-    this.marketFood = Math.min(99, this.marketFood + qty);
+    this.milk = 0;
+    this.eggs = 0;
+    this.marketFood = Math.min(99, this.marketFood + greens);
+    this.stallMilk = Math.min(99, this.stallMilk + milk);
+    this.stallEggs = Math.min(99, this.stallEggs + eggs);
+    const points = greens + milk * 2 + eggs + (wasBare ? 1 : 0);
+    this.addService(this.name, points);
     this.persistMarket();
     this.refreshBoard();
-    this.hooks.onToast(
-      wasBare
-        ? "The stall was bare. Leaving this mattered."
-        : qty === 1
-          ? "You leave one at the stall."
-          : `You leave ${qty} at the stall.`,
-    );
-    this.feed(`${this.name} leaves ${qty} at the market. Service ${this.service}.`, true);
-    this.hooks.onMarket?.({ op: "give", qty });
+    const parts = [
+      greens ? `${greens} greens` : "",
+      milk ? `${milk} milk` : "",
+      eggs ? `${eggs} ${eggs === 1 ? "egg" : "eggs"}` : "",
+    ].filter(Boolean);
+    this.hooks.onToast(wasBare ? `The stall was bare. You set out ${parts.join(", ")}.` : `You set out ${parts.join(", ")}.`);
+    this.feed(`${this.name} sets ${parts.join(", ")} on the stall. Service ${this.service}.`, true);
+    this.hooks.onMarket?.({ op: "give", greens, milk, eggs });
     this.emitStatus();
-    return qty;
+    return points;
   }
 
   takeFromMarket(): number {
@@ -1218,40 +1405,59 @@ export class VillageWorld {
       this.hooks.onToast("The market is the red stall, east of the fire.");
       return 0;
     }
-    if (this.marketFood <= 0) {
-      this.hooks.onToast("The stall is empty.");
+    const good: Good | null =
+      this.marketFood > 0 && this.food < this.basketCap()
+        ? "greens"
+        : this.stallMilk > 0 && this.milk < 6
+          ? "milk"
+          : this.stallEggs > 0 && this.eggs < 8
+            ? "eggs"
+            : null;
+    if (!good) {
+      this.hooks.onToast(this.marketFood + this.stallMilk + this.stallEggs > 0 ? "Your hands are full." : "The stall is empty.");
       return 0;
     }
-    if (this.food >= this.basketCap()) {
-      this.hooks.onToast("Your basket is full.");
-      return 0;
+    if (good === "greens") {
+      this.marketFood -= 1;
+      this.food += 1;
+    } else if (good === "milk") {
+      this.stallMilk -= 1;
+      this.milk += 1;
+    } else {
+      this.stallEggs -= 1;
+      this.eggs += 1;
     }
-    this.marketFood -= 1;
-    this.food += 1;
     this.persistFood();
     this.persistMarket();
     this.refreshBoard();
-    this.hooks.onToast("You take one from the market.");
-    this.feed(`${this.name} takes one from the market.`, true);
-    this.hooks.onMarket?.({ op: "take" });
+    const label = good === "greens" ? "greens" : good === "milk" ? "milk" : "an egg";
+    this.hooks.onToast(`You take ${label} from the stall.`);
+    this.feed(`${this.name} takes ${label} from the stall.`, true);
+    this.hooks.onMarket?.({ op: "take", good });
     this.emitStatus();
     return 1;
   }
 
-  receiveGive(fromName: string, qty: number) {
+  receiveGive(fromName: string, greens: number, milk = 0, eggs = 0) {
     const name = asAnon(fromName, fromName);
-    const amount = Math.max(0, Math.min(12, Math.floor(qty)));
-    if (!amount || name === this.name) return;
-    this.addService(name, amount);
-    this.marketFood = Math.min(99, this.marketFood + amount);
+    const g = Math.max(0, Math.min(20, Math.floor(greens)));
+    const m = Math.max(0, Math.min(12, Math.floor(milk)));
+    const e = Math.max(0, Math.min(12, Math.floor(eggs)));
+    if ((!g && !m && !e) || name === this.name) return;
+    this.addService(name, g + m * 2 + e);
+    this.marketFood = Math.min(99, this.marketFood + g);
+    this.stallMilk = Math.min(99, this.stallMilk + m);
+    this.stallEggs = Math.min(99, this.stallEggs + e);
     this.persistMarket();
     this.refreshBoard();
     this.emitStatus();
   }
 
-  receiveTake(fromName: string) {
+  receiveTake(fromName: string, good: Good = "greens") {
     if (asAnon(fromName, fromName) === this.name) return;
-    this.marketFood = Math.max(0, this.marketFood - 1);
+    if (good === "milk") this.stallMilk = Math.max(0, this.stallMilk - 1);
+    else if (good === "eggs") this.stallEggs = Math.max(0, this.stallEggs - 1);
+    else this.marketFood = Math.max(0, this.marketFood - 1);
     this.persistMarket();
     this.refreshBoard();
     this.emitStatus();
@@ -1269,14 +1475,18 @@ export class VillageWorld {
   getMarketSnapshot() {
     return {
       stock: this.marketFood,
+      milk: this.stallMilk,
+      eggs: this.stallEggs,
       scores: [...this.scores.entries()].filter(([, points]) => points > 0).map(([n, p]) => ({ n, p })),
     };
   }
 
-  applyMarketSnapshot(stock: number, rows: { n: string; p: number }[]) {
+  applyMarketSnapshot(stock: number, rows: { n: string; p: number }[], dairy?: { milk?: number; eggs?: number }) {
     const remoteMine = rows.find((row) => asAnon(row.n, row.n) === this.name)?.p ?? 0;
     const extra = Math.max(0, this.service - remoteMine);
     this.marketFood = Math.max(0, Math.min(99, Math.floor(stock) + extra));
+    if (typeof dairy?.milk === "number") this.stallMilk = Math.max(0, Math.min(99, Math.floor(dairy.milk)));
+    if (typeof dairy?.eggs === "number") this.stallEggs = Math.max(0, Math.min(99, Math.floor(dairy.eggs)));
     for (const row of rows) {
       if (!row || typeof row.n !== "string" || typeof row.p !== "number") continue;
       const name = asAnon(row.n, row.n);
@@ -1286,7 +1496,7 @@ export class VillageWorld {
     this.persistMarket();
     this.refreshBoard();
     this.emitStatus();
-    if (extra > 0) this.hooks.onMarket?.({ op: "give", qty: extra });
+    if (extra > 0) this.hooks.onMarket?.({ op: "give", greens: extra, milk: 0, eggs: 0 });
   }
 
   private nearMarket() {
@@ -1303,7 +1513,17 @@ export class VillageWorld {
   }
 
   private loadRoom() {
-    let saved: { service?: number; market?: number; food?: number; spent?: number; scores?: { n: string; p: number }[] } | null = null;
+    let saved: {
+      service?: number;
+      market?: number;
+      milk?: number;
+      eggs?: number;
+      stallMilk?: number;
+      stallEggs?: number;
+      food?: number;
+      spent?: number;
+      scores?: { n: string; p: number }[];
+    } | null = null;
     try {
       const raw = localStorage.getItem(`vibe-room:${this.roomId}`);
       if (raw) saved = JSON.parse(raw) as typeof saved;
@@ -1326,6 +1546,14 @@ export class VillageWorld {
     const spent = Number(saved?.spent ?? 0);
     this.spent = Number.isFinite(spent) ? Math.max(0, Math.min(this.service, Math.floor(spent))) : 0;
     this.marketFood = Number.isFinite(market) ? Math.max(0, Math.min(99, Math.floor(market))) : 0;
+    const stallMilk = Number(saved?.stallMilk ?? 0);
+    const stallEggs = Number(saved?.stallEggs ?? 0);
+    const carriedMilk = Number(saved?.milk ?? 0);
+    const carriedEggs = Number(saved?.eggs ?? 0);
+    this.stallMilk = Number.isFinite(stallMilk) ? Math.max(0, Math.min(99, Math.floor(stallMilk))) : 0;
+    this.stallEggs = Number.isFinite(stallEggs) ? Math.max(0, Math.min(99, Math.floor(stallEggs))) : 0;
+    this.milk = Number.isFinite(carriedMilk) ? Math.max(0, Math.min(6, Math.floor(carriedMilk))) : 0;
+    this.eggs = Number.isFinite(carriedEggs) ? Math.max(0, Math.min(8, Math.floor(carriedEggs))) : 0;
     this.food = Number.isFinite(food) ? Math.max(0, Math.min(this.basketCap(), Math.floor(food))) : 0;
     for (const row of saved?.scores ?? []) {
       if (!row || typeof row.n !== "string" || typeof row.p !== "number") continue;
@@ -1348,6 +1576,10 @@ export class VillageWorld {
           service: this.service,
           spent: this.spent,
           market: this.marketFood,
+          stallMilk: this.stallMilk,
+          stallEggs: this.stallEggs,
+          milk: this.milk,
+          eggs: this.eggs,
           food: this.food,
           scores,
         }),
@@ -1359,7 +1591,7 @@ export class VillageWorld {
 
   private refreshBoard() {
     if (this.board) {
-      const lines = [`${this.marketFood} set out`];
+      const lines = [`Greens ${this.marketFood}`, `Milk ${this.stallMilk}`, `Eggs ${this.stallEggs}`];
       const ranked = [...this.scores.entries()]
         .filter(([, points]) => points > 0)
         .sort((a, b) => b[1] - a[1])
@@ -1374,6 +1606,10 @@ export class VillageWorld {
     this.marketPile.forEach((mesh, index) => {
       mesh.visible = index < Math.min(this.marketPile.length, this.marketFood);
     });
+    this.eggPile.forEach((mesh, index) => {
+      mesh.visible = index < Math.min(this.eggPile.length, this.stallEggs);
+    });
+    if (this.pail) this.pail.visible = this.stallMilk > 0;
   }
 
   doHarvest() {
@@ -1594,15 +1830,22 @@ export class VillageWorld {
     const nextRank = RANKS[Math.min(RANKS.length - 1, this.rankIndex() + 1)];
     const status: Status = {
       food: this.food,
+      milk: this.milk,
+      eggs: this.eggs,
       market: this.marketFood,
+      stallMilk: this.stallMilk,
+      stallEggs: this.stallEggs,
       service: this.service,
       ready: this.unspent(),
       rank: this.rank().name,
       nextCost: this.rankIndex() >= RANKS.length - 1 ? 0 : nextRank.cost - this.spent,
+      nextName: this.rankIndex() >= RANKS.length - 1 ? "" : nextRank.name,
+      nextGift: this.rankIndex() >= RANKS.length - 1 ? "You can call neighbors to the stall." : nextRank.gift,
       singing: this.mode === "sing",
       sitting: this.mode === "sit",
       quiet: this.mode === "quiet",
       nearby: this.nearby,
+      tasks: this.taskViews(),
     };
     const key = JSON.stringify(status);
     if (key === this.lastStatus) return;
@@ -1810,15 +2053,17 @@ export class VillageWorld {
       else sprouts += 1;
     }
     const person = this.nearestRemote(4.4);
+    const cow = this.nearestCritter("cow", 4.8);
+    const hen = this.nearestCritter("hen", 4.2);
     let next = "";
     if (mature) next = mature === 1 ? "A plot is ready to pick." : `${mature} plots are ready.`;
     else if (sprouts) next = "Tend a sprout to hurry it.";
+    else if (cow && cow.until <= Date.now()) next = "A cow is close. You can take milk.";
+    else if (hen && hen.until <= Date.now()) next = "A hen is close. You can gather an egg.";
     else if (this.nearMarket()) {
-      next = this.marketFood
-        ? `The stall holds ${this.marketFood}. Neighbors eat from it, so it will not stay full.`
-        : "The stall is empty. Neighbors are waiting on a basket.";
+      next = `Stall · greens ${this.marketFood}, milk ${this.stallMilk}, eggs ${this.stallEggs}.`;
     } else if (person) next = `${person.name} is here. Tap them to wave.`;
-    else if (this.food > 0) next = `Basket ${this.food}. The stall is east of the fire, and it gets used.`;
+    else if (this.food + this.milk + this.eggs > 0) next = `Carrying greens ${this.food}, milk ${this.milk}, eggs ${this.eggs}.`;
     else next = this.practiceLine();
     if (next !== this.nearby) {
       this.nearby = next;
@@ -2442,7 +2687,7 @@ export class VillageWorld {
       new THREE.SpriteMaterial({ map: paintBoard(["0 set out", "Be the first"]), transparent: true, depthWrite: false }),
     );
     this.board.position.set(17.8, 1.65, 10.1);
-    this.board.scale.set(2.6, 1.55, 1);
+    this.board.scale.set(2.8, 2.05, 1);
     this.board.renderOrder = 6;
     this.scene.add(this.board);
     const pileMat = new THREE.MeshStandardMaterial({ color: 0xd3543c, roughness: 0.55 });
@@ -2454,6 +2699,24 @@ export class VillageWorld {
       this.scene.add(fruit);
       this.marketPile.push(fruit);
     }
+    const eggMat = new THREE.MeshStandardMaterial({ color: 0xf7f1e4, roughness: 0.45 });
+    for (let i = 0; i < 6; i += 1) {
+      const egg = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6), eggMat);
+      egg.scale.set(0.85, 1.15, 0.85);
+      egg.position.set(16.55 + (i % 3) * 0.22, 0.62, 8.05 + Math.floor(i / 3) * 0.22);
+      egg.visible = false;
+      egg.castShadow = true;
+      this.scene.add(egg);
+      this.eggPile.push(egg);
+    }
+    this.pail = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.16, 0.14, 0.28, 8),
+      new THREE.MeshStandardMaterial({ color: 0xf4f7fb, roughness: 0.35, metalness: 0.15 }),
+    );
+    this.pail.position.set(18.55, 0.2, 6.7);
+    this.pail.visible = false;
+    this.pail.castShadow = true;
+    this.scene.add(this.pail);
     this.refreshBoard();
   }
 
@@ -2736,6 +2999,7 @@ export class VillageWorld {
         name: v.name,
         lines: v.lines,
         line: 0,
+        until: 0,
       });
     });
   }
@@ -2816,6 +3080,7 @@ export class VillageWorld {
         phase: Math.random() * 5,
         kind,
         line: 0,
+        until: 0,
       });
     };
     add("cow", 10, 20, 0x8d6e63, 0.9);

@@ -25,9 +25,9 @@ type Reliable =
   | { k: "harvest"; id: number; until: number }
   | { k: "hi"; n: string }
   | { k: "offer"; n: string }
-  | { k: "snapshot"; crops: CropSnap[]; stock?: number; scores?: { n: string; p: number }[] }
-  | { k: "give"; n: string; qty: number }
-  | { k: "take"; n: string }
+  | { k: "snapshot"; crops: CropSnap[]; stock?: number; milk?: number; eggs?: number; scores?: { n: string; p: number }[] }
+  | { k: "give"; n: string; qty?: number; greens?: number; milk?: number; eggs?: number }
+  | { k: "take"; n: string; good?: "greens" | "milk" | "eggs" }
   | { k: "score"; n: string; p: number }
   | { k: "feed"; text: string }
   | { k: "call"; n: string }
@@ -145,17 +145,25 @@ function Village({
   const [talk, setTalk] = useState<Talk | null>(null);
   const [status, setStatus] = useState<Status>({
     food: 0,
+    milk: 0,
+    eggs: 0,
     market: 0,
+    stallMilk: 0,
+    stallEggs: 0,
     service: 0,
     ready: 0,
     rank: "Neighbor",
     nextCost: 8,
+    nextName: "Helper",
+    nextGift: "Your basket holds more.",
     singing: false,
     sitting: false,
     quiet: false,
     nearby: "",
+    tasks: [],
   });
-  const [chat, setChat] = useState("");
+  const [sheet, setSheet] = useState<null | "tasks" | "practice">(null);
+  const [group, setGroup] = useState<"do" | "be" | "give">("do");
   const [roomDraft, setRoomDraft] = useState(room);
   const [copied, setCopied] = useState(false);
   const [clean, setClean] = useState(readClean);
@@ -179,8 +187,8 @@ function Village({
     p2p.send({ k: "hi", n: name }, id);
   };
   hooks.current.onMarket = (msg) => {
-    if (msg.op === "give") p2p.send({ k: "give", n: name, qty: msg.qty });
-    else if (msg.op === "take") p2p.send({ k: "take", n: name });
+    if (msg.op === "give") p2p.send({ k: "give", n: name, qty: msg.greens, greens: msg.greens, milk: msg.milk, eggs: msg.eggs });
+    else if (msg.op === "take") p2p.send({ k: "take", n: name, good: msg.good });
     else p2p.send({ k: "score", n: name, p: msg.p });
   };
 
@@ -225,11 +233,13 @@ function Village({
         world.applyHarvest(msg.id, msg.until);
       } else if (msg.k === "snapshot" && Array.isArray(msg.crops)) {
         world.applySnapshot(msg.crops);
-        if (typeof msg.stock === "number" && Array.isArray(msg.scores)) world.applyMarketSnapshot(msg.stock, msg.scores);
-      } else if (msg.k === "give" && typeof msg.n === "string" && typeof msg.qty === "number") {
-        world.receiveGive(msg.n, msg.qty);
+        if (typeof msg.stock === "number" && Array.isArray(msg.scores)) {
+          world.applyMarketSnapshot(msg.stock, msg.scores, { milk: msg.milk, eggs: msg.eggs });
+        }
+      } else if (msg.k === "give" && typeof msg.n === "string") {
+        world.receiveGive(msg.n, msg.greens ?? msg.qty ?? 0, msg.milk ?? 0, msg.eggs ?? 0);
       } else if (msg.k === "take" && typeof msg.n === "string") {
-        world.receiveTake(msg.n);
+        world.receiveTake(msg.n, msg.good ?? "greens");
       } else if (msg.k === "score" && typeof msg.n === "string" && typeof msg.p === "number") {
         world.receiveScore(msg.n, msg.p);
       } else if (msg.k === "feed" && typeof msg.text === "string") {
@@ -632,92 +642,152 @@ function Village({
             </div>
           </article>
         ) : null}
+        {sheet === "tasks" ? (
+          <section className="vibe-sheet vibe-glass" aria-label="Tasks">
+            <header className="vibe-sheet-head">
+              <strong>Tasks</strong>
+              <button type="button" className="vibe-talk-x" onClick={() => setSheet(null)} aria-label="Close tasks">
+                <X className="size-4" />
+              </button>
+            </header>
+            {status.tasks.map((task) => (
+              <article key={task.id} className="vibe-task" data-state={task.state}>
+                <div className="vibe-task-top">
+                  <strong>{task.title}</strong>
+                  <span>+{task.reward}</span>
+                </div>
+                <p>{task.detail}</p>
+                <div className="vibe-meter" aria-hidden="true">
+                  <span style={{ width: `${Math.round(task.progress * 100)}%` }} />
+                </div>
+                <em>{task.state === "done" ? "Resting" : task.state === "doing" ? "In progress" : "Open"}</em>
+              </article>
+            ))}
+          </section>
+        ) : null}
+        {sheet === "practice" ? (
+          <section className="vibe-sheet vibe-glass" aria-label="Practice">
+            <header className="vibe-sheet-head">
+              <strong>{status.rank}</strong>
+              <button type="button" className="vibe-talk-x" onClick={() => setSheet(null)} aria-label="Close practice">
+                <X className="size-4" />
+              </button>
+            </header>
+            <p>Service done {status.service}. Ready to use {status.ready}.</p>
+            {status.nextCost > 0 ? (
+              <p>
+                Next is {status.nextName}, for {status.nextCost}. {status.nextGift}
+              </p>
+            ) : (
+              <p>{status.nextGift}</p>
+            )}
+            <button type="button" className="vibe-btn" data-on={status.nextCost > 0 && status.ready >= status.nextCost} onClick={() => worldRef.current?.rise()}>
+              {status.rank === "Guide" ? "Call the table" : "Rise"}
+            </button>
+          </section>
+        ) : null}
+        <div className="vibe-groups" role="tablist">
+          <button type="button" className="vibe-btn" data-on={group === "do"} onClick={() => setGroup("do")}>Do</button>
+          <button type="button" className="vibe-btn" data-on={group === "be"} onClick={() => setGroup("be")}>Be</button>
+          <button type="button" className="vibe-btn" data-on={group === "give"} onClick={() => setGroup("give")}>Give</button>
+          <button type="button" className="vibe-btn" data-on={sheet === "tasks"} onClick={() => setSheet((open) => (open === "tasks" ? null : "tasks"))}>Tasks</button>
+          <button type="button" className="vibe-btn" data-on={sheet === "practice"} onClick={() => setSheet((open) => (open === "practice" ? null : "practice"))}>{status.rank}</button>
+        </div>
         <div className="vibe-actions">
-          <button type="button" className="vibe-btn" onClick={() => {
-            worldRef.current?.doWave();
-            p2p.send({ k: "hi", n: name });
-          }}>
-            <Hand className="size-4" aria-hidden="true" /> Wave
-          </button>
-          <button type="button" className="vibe-btn" data-on={status.singing} aria-pressed={status.singing} onClick={() => worldRef.current?.doSing()}>
-            <Music className="size-4" aria-hidden="true" /> Sing
-          </button>
-          <button type="button" className="vibe-btn" onClick={() => worldRef.current?.doDance()}>
-            <Flower2 className="size-4" aria-hidden="true" /> Dance
-          </button>
-          <button type="button" className="vibe-btn" data-on={status.quiet} aria-pressed={status.quiet} onClick={() => worldRef.current?.doQuiet()}>
-            <Flower2 className="size-4" aria-hidden="true" /> Quiet
-          </button>
-          <button type="button" className="vibe-btn" onClick={() => worldRef.current?.doHarvest()}>
-            <Sprout className="size-4" aria-hidden="true" /> Pick
-          </button>
-          <button type="button" className="vibe-btn" data-on={status.sitting} aria-pressed={status.sitting} onClick={() => worldRef.current?.doSit()}>
-            <Armchair className="size-4" aria-hidden="true" /> Sit
-          </button>
-          <button type="button" className="vibe-btn" onClick={() => worldRef.current?.doEat()}>
-            <Utensils className="size-4" aria-hidden="true" /> Eat · {status.food}
-          </button>
-          <button type="button" className="vibe-btn" onClick={() => {
-            const near = worldRef.current?.tryOffer();
-            if (near) p2p.send({ k: "offer", n: name }, near.id);
-          }}>
-            <Gift className="size-4" aria-hidden="true" /> Share
-          </button>
-          <button type="button" className="vibe-btn" onClick={() => worldRef.current?.leaveBasket()}>
-            <Gift className="size-4" aria-hidden="true" /> Market · {status.service}
-          </button>
-          <button
-            type="button"
-            className="vibe-btn"
-            data-on={status.nextCost > 0 && status.ready >= status.nextCost}
-            onClick={() => worldRef.current?.rise()}
-          >
-            <Flower2 className="size-4" aria-hidden="true" />{" "}
-            {status.rank === "Guide" ? "Call table" : `${status.rank} · ${status.ready}`}
-          </button>
-          <button
-            type="button"
-            className="vibe-btn"
-            data-on={call?.phase === "live" || call?.phase === "out"}
-            onClick={() => {
-              if (call && call.phase !== "in") {
-                p2p.send({ k: "call-end" }, call.id);
-                p2p.endVoice();
-                worldRef.current?.setTalking(call.id, false);
-                worldRef.current?.announce(`${name} lets the talk rest.`);
-                setCall(null);
-                setToast("The talk rests.");
-                return;
-              }
-              const near = worldRef.current?.nearestRemote(8);
-              if (!near) {
-                setToast("Walk over to someone with a green dot.");
-                return;
-              }
-              const ready = p2p.peers.some((p) => p.id === near.id && (p.connectionState === "connected" || p.connectionState === "connecting"));
-              if (!ready) {
-                setToast(`${near.name} is still on the way.`);
-                return;
-              }
-              const priming = p2p.primeVoice(near.id);
-              p2p.send({ k: "call", n: name }, near.id);
-              worldRef.current?.announce(`${name} asks ${near.name} to talk.`);
-              setCall({ id: near.id, name: near.name, phase: "out" });
-              setToast(`Waiting for ${near.name} to allow the microphone…`);
-              void priming.then((mic) => {
-                if (mic === "ok") return;
-                setCall((current) => {
-                  if (!current || current.id !== near.id || current.phase === "live") return current;
-                  p2p.send({ k: "call-fail", why: "no-mic" }, near.id);
-                  p2p.endVoice();
-                  setToast("Your microphone didn't open. Allow it for the page, then tap Talk.");
-                  return null;
-                });
-              });
-            }}
-          >
-            <Phone className="size-4" aria-hidden="true" /> {call?.phase === "live" ? "Hang up" : call?.phase === "out" ? "Calling" : "Talk"}
-          </button>
+          {group === "do" ? (
+            <>
+              <button type="button" className="vibe-btn" onClick={() => worldRef.current?.doHarvest()}>
+                <Sprout className="size-4" aria-hidden="true" /> Pick · {status.food}
+              </button>
+              <button type="button" className="vibe-btn" onClick={() => worldRef.current?.doMilk()}>
+                Milk · {status.milk}
+              </button>
+              <button type="button" className="vibe-btn" onClick={() => worldRef.current?.doEggs()}>
+                Eggs · {status.eggs}
+              </button>
+              <button type="button" className="vibe-btn" onClick={() => worldRef.current?.doEat()}>
+                <Utensils className="size-4" aria-hidden="true" /> Eat
+              </button>
+            </>
+          ) : null}
+          {group === "be" ? (
+            <>
+              <button type="button" className="vibe-btn" onClick={() => {
+                worldRef.current?.doWave();
+                p2p.send({ k: "hi", n: name });
+              }}>
+                <Hand className="size-4" aria-hidden="true" /> Wave
+              </button>
+              <button type="button" className="vibe-btn" data-on={status.singing} aria-pressed={status.singing} onClick={() => worldRef.current?.doSing()}>
+                <Music className="size-4" aria-hidden="true" /> Sing
+              </button>
+              <button type="button" className="vibe-btn" onClick={() => worldRef.current?.doDance()}>
+                <Flower2 className="size-4" aria-hidden="true" /> Dance
+              </button>
+              <button type="button" className="vibe-btn" data-on={status.quiet} aria-pressed={status.quiet} onClick={() => worldRef.current?.doQuiet()}>
+                Quiet
+              </button>
+              <button type="button" className="vibe-btn" data-on={status.sitting} aria-pressed={status.sitting} onClick={() => worldRef.current?.doSit()}>
+                <Armchair className="size-4" aria-hidden="true" /> Sit
+              </button>
+              <button
+                type="button"
+                className="vibe-btn"
+                data-on={call?.phase === "live" || call?.phase === "out"}
+                onClick={() => {
+                  if (call && call.phase !== "in") {
+                    p2p.send({ k: "call-end" }, call.id);
+                    p2p.endVoice();
+                    worldRef.current?.setTalking(call.id, false);
+                    worldRef.current?.announce(`${name} lets the talk rest.`);
+                    setCall(null);
+                    setToast("The talk rests.");
+                    return;
+                  }
+                  const near = worldRef.current?.nearestRemote(8);
+                  if (!near) {
+                    setToast("Walk over to someone with a green dot.");
+                    return;
+                  }
+                  const ready = p2p.peers.some((p) => p.id === near.id && (p.connectionState === "connected" || p.connectionState === "connecting" || p.relayed));
+                  if (!ready) {
+                    setToast(`${near.name} is still on the way.`);
+                    return;
+                  }
+                  const priming = p2p.primeVoice(near.id);
+                  p2p.send({ k: "call", n: name }, near.id);
+                  worldRef.current?.announce(`${name} asks ${near.name} to talk.`);
+                  setCall({ id: near.id, name: near.name, phase: "out" });
+                  setToast(`Waiting for ${near.name} to allow the microphone…`);
+                  void priming.then((mic) => {
+                    if (mic === "ok") return;
+                    setCall((current) => {
+                      if (!current || current.id !== near.id || current.phase === "live") return current;
+                      p2p.send({ k: "call-fail", why: "no-mic" }, near.id);
+                      p2p.endVoice();
+                      setToast("Your microphone didn't open. Allow it for the page, then tap Talk.");
+                      return null;
+                    });
+                  });
+                }}
+              >
+                <Phone className="size-4" aria-hidden="true" /> {call?.phase === "live" ? "Hang up" : call?.phase === "out" ? "Calling" : "Talk"}
+              </button>
+            </>
+          ) : null}
+          {group === "give" ? (
+            <>
+              <button type="button" className="vibe-btn" onClick={() => {
+                const near = worldRef.current?.tryOffer();
+                if (near) p2p.send({ k: "offer", n: name }, near.id);
+              }}>
+                <Gift className="size-4" aria-hidden="true" /> Share
+              </button>
+              <button type="button" className="vibe-btn" onClick={() => worldRef.current?.leaveBasket()}>
+                <Gift className="size-4" aria-hidden="true" /> Stall · {status.market}/{status.stallMilk}/{status.stallEggs}
+              </button>
+            </>
+          ) : null}
         </div>
         <form
           className="vibe-chat"

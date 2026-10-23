@@ -502,8 +502,8 @@
     transform: translateX(-50%);
   }
   .vibe-actions {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     overflow: visible;
   }
   .vibe-stage[data-clean="true"] .vibe-dock {
@@ -516,4 +516,67 @@
   .keys-hint {
     display: none;
   }
+}
+
+.vibe-groups {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.vibe-groups::-webkit-scrollbar {
+  display: none;
+}
+
+.vibe-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 42vh;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 18px;
+}
+
+.vibe-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-display);
+}
+
+.vibe-sheet p,
+.vibe-task p,
+.vibe-task em {
+  margin: 0;
+  color: var(--color-sand);
+  font-size: 0.88rem;
+  font-style: normal;
+}
+
+.vibe-task {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--color-sand) 24%, transparent);
+}
+
+.vibe-task-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vibe-meter {
+  height: 4px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--color-sand) 24%, transparent);
+  overflow: hidden;
+}
+
+.vibe-meter span {
+  display: block;
+  height: 100%;
+  background: var(--color-amber);
 }
