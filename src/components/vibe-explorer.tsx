@@ -172,10 +172,10 @@ function Village({
     stallEggs: 0,
     service: 0,
     ready: 0,
-    rank: "Neighbor",
+    rank: "Just here",
     nextCost: 8,
-    nextName: "Helper",
-    nextGift: "Your basket holds more.",
+    nextName: "Helping out",
+    nextGift: "You can carry a bit more.",
     devoted: 0,
     devotionNeed: 90,
     still: false,
@@ -747,35 +747,36 @@ function Village({
           </section>
         ) : null}
         {sheet === "practice" ? (
-          <section className="vibe-sheet vibe-glass" aria-label="Practice">
+          <section className="vibe-sheet vibe-glass" aria-label="How you're doing here">
             <header className="vibe-sheet-head">
-              <strong>{status.still ? "Here" : status.rank}</strong>
-              <button type="button" className="vibe-talk-x" onClick={() => setSheet(null)} aria-label="Close practice">
+              <strong>{status.still ? "Just here" : status.rank}</strong>
+              <button type="button" className="vibe-talk-x" onClick={() => setSheet(null)} aria-label="Close">
                 <X className="size-4" />
               </button>
             </header>
             {status.still ? (
-              <p>Nothing is owed. The meadow was already here. Sit, watch the water, be with someone.</p>
+              <p>Nothing is owed. Just be here.</p>
             ) : (
               <>
-                <p>Given {status.service}. Set aside {status.ready}.</p>
                 <p>
-                  Quiet time {Math.floor(status.devoted / 60)}:{String(status.devoted % 60).padStart(2, "0")}.
+                  You've helped {status.service} {status.service === 1 ? "time" : "times"}. {status.ready} ready for the next step.
+                </p>
+                <p>
                   {status.devotionNeed > 0
-                    ? ` The next step still wants ${Math.floor(status.devotionNeed / 60)}:${String(status.devotionNeed % 60).padStart(2, "0")} in the dome.`
-                    : status.rank === "Guide"
-                      ? " Sit by the water, in the dome, or beside someone. Two quiet minutes, and the names can rest."
-                      : " The dome has given enough time for this step."}
+                    ? `Sit quietly for ${Math.round(status.devotionNeed / 60) <= 1 ? "about a minute" : `about ${Math.round(status.devotionNeed / 60)} minutes`} to go further.`
+                    : status.nextCost === 0
+                      ? "You've sat long enough. Call people over, or just be here."
+                      : "You've sat long enough for this step."}
                 </p>
                 {status.nextCost > 0 ? (
                   <p>
-                    Next is {status.nextName}, for {status.nextCost}. {status.nextGift}
+                    Next is {status.nextName}. That takes {status.nextCost} more help. {status.nextGift}
                   </p>
                 ) : (
-                  <p>{status.nextGift} The names were only a way of walking.</p>
+                  <p>{status.nextGift}</p>
                 )}
                 <button type="button" className="vibe-btn" data-on={status.nextCost > 0 && status.ready >= status.nextCost} onClick={() => worldRef.current?.rise()}>
-                  {status.rank === "Guide" ? "Call the table" : "Rise"}
+                  {status.nextCost > 0 ? "Take the next step" : "Call everyone over"}
                 </button>
               </>
             )}
@@ -808,7 +809,7 @@ function Village({
           <button type="button" className="vibe-btn" data-on={group === "be"} onClick={() => setGroup("be")}>Be</button>
           <button type="button" className="vibe-btn" data-on={group === "give"} onClick={() => setGroup("give")}>Give</button>
           <button type="button" className="vibe-btn" data-on={sheet === "tasks"} onClick={() => setSheet((open) => (open === "tasks" ? null : "tasks"))}>Tasks</button>
-          <button type="button" className="vibe-btn" data-on={sheet === "practice"} onClick={() => setSheet((open) => (open === "practice" ? null : "practice"))}>{status.still ? "Here" : status.rank}</button>
+          <button type="button" className="vibe-btn" data-on={sheet === "practice"} onClick={() => setSheet((open) => (open === "practice" ? null : "practice"))}>{status.still ? "Just here" : status.rank}</button>
         </div>
         <div className="vibe-actions">
           {group === "do" ? (
