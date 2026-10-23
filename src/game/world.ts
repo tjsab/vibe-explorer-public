@@ -720,7 +720,13 @@ export class VillageWorld {
   private leafTime: { value: number };
   private firePos: Float32Array;
   private flyPos: Float32Array;
+  private readonly islands: { x: number; z: number; r: number }[] = [];
   private pond = { x: 20, z: -10, r: 8.15 };
+  private boat = { x: 49, z: 5, r: 0.2 };
+  private boatGroup: THREE.Group | null = null;
+  private sailing = false;
+  private boarded = 0;
+  private readonly wake: THREE.Mesh[] = [];
   private name: string;
   private readonly color: number;
   private readonly roomId: string;
@@ -2047,8 +2053,9 @@ export class VillageWorld {
     }
     if (this.waterGain) {
       const d = Math.hypot(this.px - this.pond.x, this.pz - this.pond.z);
-      const want = d < 22 ? (1 - d / 22) * 0.7 : 0;
-      this.waterGain.gain.setTargetAtTime(want, t, 0.35);
+      const pond = d < 22 ? (1 - d / 22) * 0.7 : 0;
+      const sea = Math.max(0, Math.min(0.55, (this.px - 34) / 28));
+      this.waterGain.gain.setTargetAtTime(Math.max(pond, sea), t, 0.35);
     }
     if (this.birdNext < t) {
       this.playFlute(t + 0.05, 1400 + Math.random() * 500, 0.18, 0.03, this.forest);
@@ -2220,6 +2227,18 @@ export class VillageWorld {
     }
     this.resolved.x = Math.max(-WORLD, Math.min(WORLD, x));
     this.resolved.z = Math.max(-WORLD, Math.min(WORLD, z));
+    const isle = this.islands.find((i) => Math.hypot(this.px - i.x, this.pz - i.z) < i.r + 0.4);
+    if (isle) {
+      const d = Math.hypot(x - isle.x, z - isle.z);
+      const limit = isle.r - 0.7;
+      if (d > limit) {
+        const a = Math.atan2(z - isle.z, x - isle.x);
+        x = isle.x + Math.cos(a) * limit;
+        z = isle.z + Math.sin(a) * limit;
+      }
+      this.resolved.x = x;
+      this.resolved.z = z;
+    }
   }
 
   private anyoneSinging() {
@@ -2255,6 +2274,44 @@ export class VillageWorld {
       this.emitStatus();
     }
     if (movingInput && (this.emote === "dance" || this.emote === "eat")) this.emote = null;
+    if (!this.sailing && movingInput && Math.hypot(this.px - this.boat.x, this.pz - this.boat.z) < 2.5) {
+      this.sailing = true;
+      this.boarded = this.elapsed;
+      this.mode = null;
+      this.hooks.onToast("You're on the boat. Steer out. Ease off at a beach to step off.");
+      this.feed(`${this.name} takes the boat out.`, true);
+    }
+    if (this.sailing) {
+      const go = Math.max(-0.25, Math.min(1, sz));
+      this.boat.r += sx * 1.35 * dt;
+      const sp = 12 * go;
+      this.boat.x = Math.max(42, Math.min(168, this.boat.x + Math.sin(this.boat.r) * sp * dt));
+      this.boat.z = Math.max(-78, Math.min(78, this.boat.z + Math.cos(this.boat.r) * sp * dt));
+      const isle = this.islands.find((i) => Math.hypot(this.boat.x - i.x, this.boat.z - i.z) < i.r + 1.4);
+      if (isle) {
+        const a = Math.atan2(this.boat.z - isle.z, this.boat.x - isle.x);
+        this.boat.x = isle.x + Math.cos(a) * (isle.r + 1.35);
+        this.boat.z = isle.z + Math.sin(a) * (isle.r + 1.35);
+      }
+      this.px = this.boat.x;
+      this.pz = this.boat.z;
+      this.facing = this.boat.r;
+      this.speed = Math.abs(sp);
+      const home = this.boat.x < 47 && Math.abs(this.boat.z) < 28;
+      if (this.elapsed - this.boarded > 1.4 && go < 0.12 && (isle || home)) {
+        this.sailing = false;
+        if (isle) {
+          const a = Math.atan2(this.boat.z - isle.z, this.boat.x - isle.x);
+          this.px = isle.x + Math.cos(a) * (isle.r * 0.55);
+          this.pz = isle.z + Math.sin(a) * (isle.r * 0.55);
+        } else {
+          this.px = 44;
+          this.pz = this.boat.z;
+        }
+        this.hooks.onToast("You step onto the sand.");
+        this.feed(`${this.name} steps onto the sand.`, true);
+      }
+    } else {
     const inWater = Math.hypot(this.px - this.pond.x, this.pz - this.pond.z) < this.pond.r - 0.35;
     if (movingInput) {
       const clamped = Math.min(mag, 1);
@@ -2271,6 +2328,7 @@ export class VillageWorld {
     } else {
       this.speed = 0;
     }
+    }
     const fx = Math.sin(this.facing);
     const fz = Math.cos(this.facing);
     this.yaw = Math.atan2(-fx, -fz);
@@ -2280,9 +2338,37 @@ export class VillageWorld {
     const swimming = pondD < this.pond.r - 0.35;
     if (swimming && !this.swimming) this.feed(`${this.name} just jumped in the pond for a swim.`, true);
     this.swimming = swimming;
-    this.player.position.set(this.px, swimming ? -0.06 + Math.sin(this.elapsed * 2.2) * 0.025 : 0, this.pz);
+    this.player.position.set(
+      this.px,
+      this.sailing ? 0.42 + Math.sin(this.elapsed * 1.6) * 0.05 : swimming ? -0.06 + Math.sin(this.elapsed * 2.2) * 0.025 : 0,
+      this.pz,
+    );
     this.player.rotation.y = this.facing;
-    animateAvatar(this.player, action, this.elapsed);
+    animateAvatar(this.player, this.sailing ? "sit" : action, this.elapsed);
+    if (this.boatGroup) {
+      this.boatGroup.position.set(this.boat.x, 0.12 + Math.sin(this.elapsed * 1.5) * 0.07, this.boat.z);
+      this.boatGroup.rotation.y = this.boat.r;
+      this.boatGroup.rotation.z = Math.sin(this.elapsed * 1.3) * 0.04;
+      this.wake.forEach((foam, i) => {
+        const back = 1.4 + i * 0.85;
+        foam.position.set(
+          this.boat.x - Math.sin(this.boat.r) * back,
+          0.16,
+          this.boat.z - Math.cos(this.boat.r) * back,
+        );
+        foam.rotation.y = this.boat.r;
+        const mat = foam.material as THREE.MeshBasicMaterial;
+        mat.opacity = this.sailing && this.speed > 2 ? 0.45 - i * 0.06 : 0;
+      });
+    }
+    const fog = this.scene.fog as THREE.Fog;
+    if (this.sailing || this.islands.some((i) => Math.hypot(this.px - i.x, this.pz - i.z) < i.r)) {
+      fog.near = 78;
+      fog.far = 280;
+    } else {
+      fog.near = 62;
+      fog.far = 230;
+    }
 
     const gather = this.anyoneSinging();
     this.singingRing.visible = gather;
@@ -2309,7 +2395,7 @@ export class VillageWorld {
     this.syncCrops();
     this.refreshNearby();
 
-    const dist = (this.aspect < 0.9 ? 16.4 : 13) ;
+    const dist = (this.aspect < 0.9 ? 16.4 : 13) * (this.sailing ? 1.35 : 1);
     const horiz = Math.cos(this.camPitch) * dist;
     const height = 1.35 + Math.sin(this.camPitch) * dist;
     this.camTarget.set(
@@ -2343,6 +2429,8 @@ export class VillageWorld {
     else if (cow && cow.until <= Date.now()) next = "A cow is close. You can take milk.";
     else if (hen && hen.until <= Date.now()) next = "A hen is close. You can gather an egg.";
     else if (this.nearMarket()) next = `Market · greens ${this.marketFood}, milk ${this.stallMilk}, eggs ${this.stallEggs}.`;
+    else if (this.sailing) next = "Steer with the stick. Ease off at a beach to step off.";
+    else if (Math.hypot(this.px - this.boat.x, this.pz - this.boat.z) < 4) next = "A boat is on the beach. Walk into it.";
     else if (this.inDome()) next = "This is the quiet place. Sit or be still.";
     else if (person) next = `${person.name} is here. Tap them to wave.`;
     else if (this.food + this.milk + this.eggs > 0) next = `Carrying greens ${this.food}, milk ${this.milk}, eggs ${this.eggs}.`;
@@ -2751,6 +2839,7 @@ export class VillageWorld {
     this.scene.add(firePts);
 
     this.addPond();
+    this.addCoast();
     this.addHuts();
     this.addWell();
     this.addMarket();
@@ -2763,6 +2852,122 @@ export class VillageWorld {
     this.addPeople();
     this.addCritters();
     this.addFlies();
+  }
+
+  private addCoast() {
+    const spots = [
+      { x: 76, z: 14, r: 8, palms: 3 },
+      { x: 94, z: -16, r: 6.2, palms: 2 },
+      { x: 118, z: 8, r: 11, palms: 4 },
+      { x: 142, z: -22, r: 5.4, palms: 1 },
+      { x: 108, z: 32, r: 4.4, palms: 0 },
+    ];
+    this.islands.push(...spots.map(({ x, z, r }) => ({ x, z, r })));
+
+    const geo = new THREE.PlaneGeometry(150, 180, 48, 56);
+    geo.rotateX(-Math.PI / 2);
+    const sea = new THREE.Mesh(
+      geo,
+      new THREE.ShaderMaterial({
+        transparent: true,
+        uniforms: { uTime: this.waterTime },
+        vertexShader: `
+          uniform float uTime;
+          varying float vH;
+          varying vec2 vUv;
+          void main() {
+            vec3 p = position;
+            float w = sin(p.x * 0.16 + uTime * 1.15) * 0.22 + cos(p.z * 0.11 + uTime * 0.85) * 0.16;
+            p.y += w;
+            vH = w;
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying float vH;
+          varying vec2 vUv;
+          void main() {
+            vec3 deep = vec3(0.05, 0.36, 0.46);
+            vec3 mid = vec3(0.12, 0.58, 0.62);
+            vec3 foam = vec3(0.93, 0.96, 0.94);
+            float crest = smoothstep(0.12, 0.24, vH);
+            vec3 col = mix(mid, deep, smoothstep(0.0, 0.55, vUv.x));
+            col = mix(col, foam, crest * 0.7);
+            float shore = smoothstep(0.07, 0.0, vUv.x);
+            col = mix(col, foam, shore * 0.85);
+            gl_FragColor = vec4(col, 0.94);
+          }
+        `,
+      }),
+    );
+    sea.position.set(118, 0.05, 2);
+    sea.renderOrder = 1;
+    this.scene.add(sea);
+
+    const sandMat = new THREE.MeshStandardMaterial({ color: 0xe6d2a8, roughness: 1 });
+    const beach = new THREE.Mesh(new THREE.PlaneGeometry(16, 42), sandMat);
+    beach.rotation.x = -Math.PI / 2;
+    beach.position.set(44, 0.05, 4);
+    this.scene.add(beach);
+
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x4d5856, roughness: 0.92 });
+    const palmTrunk = new THREE.MeshStandardMaterial({ color: 0x8a5a32, roughness: 0.85 });
+    const palmLeaf = new THREE.MeshStandardMaterial({ color: 0x2f7a3a, roughness: 0.8 });
+    spots.forEach((isle, index) => {
+      const sand = new THREE.Mesh(new THREE.CylinderGeometry(isle.r, isle.r + 0.8, 0.45, 18), sandMat);
+      sand.position.set(isle.x, 0.5, isle.z);
+      this.scene.add(sand);
+      for (let i = 0; i < 3; i += 1) {
+        const a = (i / 3) * Math.PI * 2 + index;
+        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(1.1 + (i % 2) * 0.7, 0), rockMat);
+        rock.position.set(isle.x + Math.cos(a) * isle.r * 0.35, 0.9 + i * 0.15, isle.z + Math.sin(a) * isle.r * 0.35);
+        rock.scale.set(1, 0.7 + i * 0.15, 1);
+        this.scene.add(rock);
+      }
+      for (let p = 0; p < isle.palms; p += 1) {
+        const a = (p / Math.max(1, isle.palms)) * Math.PI * 2 + 0.5;
+        const tree = new THREE.Group();
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.18, 2.4, 6), palmTrunk);
+        trunk.position.y = 1.4;
+        trunk.rotation.z = 0.18;
+        const leaves = new THREE.Mesh(new THREE.SphereGeometry(0.85, 7, 5), palmLeaf);
+        leaves.position.set(0.3, 2.5, 0);
+        leaves.scale.set(1.4, 0.45, 1.4);
+        tree.add(trunk, leaves);
+        tree.position.set(isle.x + Math.cos(a) * isle.r * 0.45, 0.3, isle.z + Math.sin(a) * isle.r * 0.45);
+        this.scene.add(tree);
+      }
+    });
+
+    const boat = new THREE.Group();
+    const hull = new THREE.Mesh(
+      new THREE.BoxGeometry(1.15, 0.38, 2.6),
+      new THREE.MeshStandardMaterial({ color: 0x6a432c, roughness: 0.75 }),
+    );
+    hull.position.y = 0.28;
+    const cabin = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, 0.55, 0.9),
+      new THREE.MeshStandardMaterial({ color: 0xc45c3a, roughness: 0.6 }),
+    );
+    cabin.position.set(0, 0.62, -0.15);
+    const mast = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.04, 1.5, 5),
+      new THREE.MeshStandardMaterial({ color: 0xd8c7a2, roughness: 0.7 }),
+    );
+    mast.position.set(0, 1.2, 0.55);
+    boat.add(hull, cabin, mast);
+    boat.position.set(this.boat.x, 0.12, this.boat.z);
+    this.boatGroup = boat;
+    this.scene.add(boat);
+
+    const foamMat = new THREE.MeshBasicMaterial({ color: 0xf7fbfb, transparent: true, opacity: 0, depthWrite: false });
+    for (let i = 0; i < 6; i += 1) {
+      const foam = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.35), foamMat.clone());
+      foam.rotation.x = -Math.PI / 2;
+      this.wake.push(foam);
+      this.scene.add(foam);
+    }
   }
 
   private addPond() {
