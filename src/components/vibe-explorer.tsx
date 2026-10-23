@@ -25,7 +25,10 @@ type Reliable =
   | { k: "harvest"; id: number; until: number }
   | { k: "hi"; n: string }
   | { k: "offer"; n: string }
-  | { k: "snapshot"; crops: CropSnap[] }
+  | { k: "snapshot"; crops: CropSnap[]; stock?: number; scores?: { n: string; p: number }[] }
+  | { k: "give"; n: string; qty: number }
+  | { k: "take"; n: string }
+  | { k: "score"; n: string; p: number }
   | { k: "feed"; text: string }
   | { k: "call"; n: string }
   | { k: "call-yes"; n: string }
@@ -115,6 +118,8 @@ function Village({
   const [talk, setTalk] = useState<Talk | null>(null);
   const [status, setStatus] = useState<Status>({
     food: 0,
+    market: 0,
+    service: 0,
     singing: false,
     sitting: false,
     quiet: false,
@@ -142,6 +147,11 @@ function Village({
   };
   hooks.current.onGreet = (id) => {
     p2p.send({ k: "hi", n: name }, id);
+  };
+  hooks.current.onMarket = (msg) => {
+    if (msg.op === "give") p2p.send({ k: "give", n: name, qty: msg.qty });
+    else if (msg.op === "take") p2p.send({ k: "take", n: name });
+    else p2p.send({ k: "score", n: name, p: msg.p });
   };
 
   function pushFeed(text: string) {
@@ -180,6 +190,13 @@ function Village({
         world.applyHarvest(msg.id, msg.until);
       } else if (msg.k === "snapshot" && Array.isArray(msg.crops)) {
         world.applySnapshot(msg.crops);
+        if (typeof msg.stock === "number" && Array.isArray(msg.scores)) world.applyMarketSnapshot(msg.stock, msg.scores);
+      } else if (msg.k === "give" && typeof msg.n === "string" && typeof msg.qty === "number") {
+        world.receiveGive(msg.n, msg.qty);
+      } else if (msg.k === "take" && typeof msg.n === "string") {
+        world.receiveTake(msg.n);
+      } else if (msg.k === "score" && typeof msg.n === "string" && typeof msg.p === "number") {
+        world.receiveScore(msg.n, msg.p);
       } else if (msg.k === "feed" && typeof msg.text === "string") {
         pushFeed(msg.text);
       } else if (msg.k === "hi" && typeof msg.n === "string") {
@@ -247,7 +264,7 @@ function Village({
       const already = [p2p.selfId, ...connected.filter((x) => x !== id && seen.current.has(x))];
       const smallest = already.reduce((a, b) => (a < b ? a : b));
       if (smallest === p2p.selfId && world) {
-        p2p.send({ k: "snapshot", crops: world.getCropSnapshot() }, id);
+        p2p.send({ k: "snapshot", crops: world.getCropSnapshot(), ...world.getMarketSnapshot() }, id);
       }
       seen.current.add(id);
     }
@@ -572,6 +589,9 @@ function Village({
             if (near) p2p.send({ k: "offer", n: name }, near.id);
           }}>
             <Gift className="size-4" aria-hidden="true" /> Share
+          </button>
+          <button type="button" className="vibe-btn" onClick={() => worldRef.current?.leaveBasket()}>
+            <Gift className="size-4" aria-hidden="true" /> Market · {status.service}
           </button>
           <button
             type="button"

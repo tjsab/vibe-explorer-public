@@ -16,6 +16,8 @@ export type CropSnap = { id: number; until: number };
 
 export type Status = {
   food: number;
+  market: number;
+  service: number;
   singing: boolean;
   sitting: boolean;
   quiet: boolean;
@@ -29,6 +31,7 @@ export type WorldHooks = {
   onHarvest: (id: number, until: number) => void;
   onFeed: (line: string, share?: boolean) => void;
   onGreet?: (id: string, name: string) => void;
+  onMarket?: (msg: { op: "give"; qty: number } | { op: "take" } | { op: "score"; p: number }) => void;
 };
 
 const ACTIONS: Action[] = ["idle", "walk", "dance", "sit", "quiet", "sing", "wave", "eat"];
@@ -155,6 +158,31 @@ function setSprite(sprite: THREE.Sprite, text: string) {
   prev?.dispose();
   sprite.visible = true;
   sprite.scale.set(Math.min(4.2, 1.3 + text.length * 0.11), 0.7, 1);
+}
+
+function paintBoard(lines: string[]) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 320;
+  const g = canvas.getContext("2d");
+  if (!g) throw new Error("canvas");
+  g.fillStyle = "#5c3b2e";
+  g.fillRect(0, 0, 512, 320);
+  g.strokeStyle = "#e7d3b4";
+  g.lineWidth = 10;
+  g.strokeRect(12, 12, 488, 296);
+  g.fillStyle = "#f6efe6";
+  g.font = "700 52px Nunito, sans-serif";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText("Service", 256, 58);
+  g.font = "600 34px Nunito, sans-serif";
+  lines.slice(0, 5).forEach((line, i) => {
+    g.fillText(line.slice(0, 28), 256, 118 + i * 38);
+  });
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 function softDot(): THREE.CanvasTexture {
@@ -505,6 +533,12 @@ export class VillageWorld {
   private emote: "dance" | "wave" | "eat" | null = null;
   private emoteUntil = 0;
   private food: number;
+  private marketFood = 0;
+  private service = 0;
+  private readonly scores = new Map<string, number>();
+  private board: THREE.Sprite | null = null;
+  private readonly marketPile: THREE.Mesh[] = [];
+  private readonly marketAt = { x: 17.8, z: 7.5 };
   private swimming = false;
   private nextVillagerNote = 3;
   private lastFeed = "";
@@ -567,6 +601,11 @@ export class VillageWorld {
     this.color = identity.color;
     const savedFood = Number(sessionStorage.getItem("vibe-food") ?? "0");
     this.food = Number.isFinite(savedFood) ? Math.max(0, Math.min(12, Math.floor(savedFood))) : 0;
+    const savedService = Number(sessionStorage.getItem("vibe-service") ?? "0");
+    this.service = Number.isFinite(savedService) ? Math.max(0, Math.min(999, Math.floor(savedService))) : 0;
+    if (this.service > 0) this.scores.set(this.name, this.service);
+    const savedMarket = Number(sessionStorage.getItem("vibe-market") ?? "0");
+    this.marketFood = Number.isFinite(savedMarket) ? Math.max(0, Math.min(99, Math.floor(savedMarket))) : 0;
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
@@ -950,10 +989,152 @@ export class VillageWorld {
     this.persistFood();
     this.emote = "wave";
     this.emoteUntil = this.elapsed + 1.2;
+    this.addService(this.name, 1);
     this.hooks.onToast(`You offer food to ${near.name}.`);
-    this.feed(`${this.name} shares food with ${near.name}.`, true);
+    this.feed(`${this.name} shares food with ${near.name}. Service ${this.service}.`, true);
+    this.hooks.onMarket?.({ op: "score", p: this.service });
     this.emitStatus();
     return near;
+  }
+
+  leaveBasket(): number {
+    if (!this.nearMarket()) {
+      this.hooks.onToast("The market is the red stall, east of the fire.");
+      return 0;
+    }
+    if (this.food <= 0) {
+      if (this.marketFood > 0) return this.takeFromMarket();
+      this.hooks.onToast("The basket is empty. The garden is west.");
+      return 0;
+    }
+    const qty = this.food;
+    this.food = 0;
+    this.persistFood();
+    this.addService(this.name, qty);
+    this.marketFood = Math.min(99, this.marketFood + qty);
+    this.persistMarket();
+    this.refreshBoard();
+    this.hooks.onToast(qty === 1 ? "You leave one at the stall." : `You leave ${qty} at the stall.`);
+    this.feed(`${this.name} leaves ${qty} at the market. Service ${this.service}.`, true);
+    this.hooks.onMarket?.({ op: "give", qty });
+    this.emitStatus();
+    return qty;
+  }
+
+  takeFromMarket(): number {
+    if (!this.nearMarket()) {
+      this.hooks.onToast("The market is the red stall, east of the fire.");
+      return 0;
+    }
+    if (this.marketFood <= 0) {
+      this.hooks.onToast("The stall is empty.");
+      return 0;
+    }
+    if (this.food >= 12) {
+      this.hooks.onToast("Your basket is full.");
+      return 0;
+    }
+    this.marketFood -= 1;
+    this.food += 1;
+    this.persistFood();
+    this.persistMarket();
+    this.refreshBoard();
+    this.hooks.onToast("You take one from the market.");
+    this.feed(`${this.name} takes one from the market.`, true);
+    this.hooks.onMarket?.({ op: "take" });
+    this.emitStatus();
+    return 1;
+  }
+
+  receiveGive(fromName: string, qty: number) {
+    const name = asAnon(fromName, fromName);
+    const amount = Math.max(0, Math.min(12, Math.floor(qty)));
+    if (!amount || name === this.name) return;
+    this.addService(name, amount);
+    this.marketFood = Math.min(99, this.marketFood + amount);
+    this.persistMarket();
+    this.refreshBoard();
+    this.emitStatus();
+  }
+
+  receiveTake(fromName: string) {
+    if (asAnon(fromName, fromName) === this.name) return;
+    this.marketFood = Math.max(0, this.marketFood - 1);
+    this.persistMarket();
+    this.refreshBoard();
+    this.emitStatus();
+  }
+
+  receiveScore(fromName: string, points: number) {
+    const name = asAnon(fromName, fromName);
+    if (name === this.name || !Number.isFinite(points)) return;
+    this.addService(name, 0);
+    this.scores.set(name, Math.max(this.scores.get(name) ?? 0, Math.floor(points)));
+    this.refreshBoard();
+    this.emitStatus();
+  }
+
+  getMarketSnapshot() {
+    return {
+      stock: this.marketFood,
+      scores: [...this.scores.entries()].filter(([, points]) => points > 0).map(([n, p]) => ({ n, p })),
+    };
+  }
+
+  applyMarketSnapshot(stock: number, rows: { n: string; p: number }[]) {
+    const remoteMine = rows.find((row) => asAnon(row.n, row.n) === this.name)?.p ?? 0;
+    const extra = Math.max(0, this.service - remoteMine);
+    this.marketFood = Math.max(0, Math.min(99, Math.floor(stock) + extra));
+    for (const row of rows) {
+      if (!row || typeof row.n !== "string" || typeof row.p !== "number") continue;
+      const name = asAnon(row.n, row.n);
+      this.scores.set(name, Math.max(this.scores.get(name) ?? 0, Math.max(0, Math.floor(row.p))));
+    }
+    this.scores.set(this.name, this.service);
+    this.persistMarket();
+    this.refreshBoard();
+    this.emitStatus();
+    if (extra > 0) this.hooks.onMarket?.({ op: "give", qty: extra });
+  }
+
+  private nearMarket() {
+    return Math.hypot(this.px - this.marketAt.x, this.pz - this.marketAt.z) < 6.2;
+  }
+
+  private addService(name: string, amount: number) {
+    const next = Math.min(999, (this.scores.get(name) ?? 0) + amount);
+    this.scores.set(name, next);
+    if (name === this.name) {
+      this.service = next;
+      this.persistService();
+    }
+  }
+
+  private persistMarket() {
+    sessionStorage.setItem("vibe-market", String(this.marketFood));
+  }
+
+  private persistService() {
+    sessionStorage.setItem("vibe-service", String(this.service));
+  }
+
+  private refreshBoard() {
+    if (this.board) {
+      const lines = [`${this.marketFood} set out`];
+      const ranked = [...this.scores.entries()]
+        .filter(([, points]) => points > 0)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 4);
+      if (!ranked.length) lines.push("Be the first");
+      else for (const [who, points] of ranked) lines.push(`${who} · ${points}`);
+      const prev = this.board.material.map;
+      this.board.material.map = paintBoard(lines);
+      this.board.material.needsUpdate = true;
+      prev?.dispose();
+    }
+    this.marketPile.forEach((mesh, index) => {
+      mesh.visible = index < Math.min(this.marketPile.length, this.marketFood);
+    });
   }
 
   doHarvest() {
@@ -1162,6 +1343,8 @@ export class VillageWorld {
   private emitStatus() {
     const status: Status = {
       food: this.food,
+      market: this.marketFood,
+      service: this.service,
       singing: this.mode === "sing",
       sitting: this.mode === "sit",
       quiet: this.mode === "quiet",
@@ -1374,8 +1557,12 @@ export class VillageWorld {
     let next = "";
     if (mature) next = mature === 1 ? "A plot is ready to pick." : `${mature} plots are ready.`;
     else if (sprouts) next = "Tend a sprout to hurry it.";
-    else if (person) next = `${person.name} is here. Tap them to wave.`;
-    else if (this.food > 0) next = `Basket ${this.food}. The garden is to the west.`;
+    else if (this.nearMarket()) {
+      next = this.marketFood
+        ? `The stall holds ${this.marketFood}. Leave the basket to earn service.`
+        : "The stall is empty. A full basket can start it.";
+    } else if (person) next = `${person.name} is here. Tap them to wave.`;
+    else if (this.food > 0) next = `Basket ${this.food}. Leave it at the market, east of the fire.`;
     if (next !== this.nearby) {
       this.nearby = next;
       this.emitStatus();
@@ -1986,6 +2173,26 @@ export class VillageWorld {
       this.scene.add(fruit);
     }
     this.addCollider(17.8, 7.5, 1.9);
+    const sign = makeSprite("Market", "rgba(92,59,46,0.92)", "#f6efe6", 3.15);
+    sign.position.set(17.8, 3.15, 7.5);
+    this.scene.add(sign);
+    this.board = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: paintBoard(["0 set out", "Be the first"]), transparent: true, depthWrite: false }),
+    );
+    this.board.position.set(17.8, 1.65, 10.1);
+    this.board.scale.set(2.6, 1.55, 1);
+    this.board.renderOrder = 6;
+    this.scene.add(this.board);
+    const pileMat = new THREE.MeshStandardMaterial({ color: 0xd3543c, roughness: 0.55 });
+    for (let i = 0; i < 8; i += 1) {
+      const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8), pileMat);
+      fruit.position.set(18.3 + (i % 4) * 0.28, 0.62, 7.55 + Math.floor(i / 4) * 0.28);
+      fruit.visible = false;
+      fruit.castShadow = true;
+      this.scene.add(fruit);
+      this.marketPile.push(fruit);
+    }
+    this.refreshBoard();
   }
 
   private addFarm() {
