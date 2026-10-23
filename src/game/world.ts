@@ -1158,7 +1158,7 @@ export class VillageWorld {
         .map(([n, p]) => ({ n, p }));
       localStorage.setItem(
         `vibe-room:${this.roomId}`,
-        JSON.stringify({ service: this.service, market: this.marketFood, food: this.food, scores }),
+        JSON.stringify({ name: this.name, service: this.service, market: this.marketFood, food: this.food, scores }),
       );
     } catch {
       /* private mode */

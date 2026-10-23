@@ -45,12 +45,38 @@ function readRoom() {
   return clean || "village";
 }
 
-function readName() {
-  const saved = sessionStorage.getItem("vibe-name")?.replace(/\s+/g, " ").trim().slice(0, 24) ?? "";
-  if (saved) return saved;
-  const name = `Anon ${Math.floor(1000 + Math.random() * 9000)}`;
-  sessionStorage.setItem("vibe-name", name);
+function readName(room: string) {
+  const key = `vibe-name:${room}`;
+  try {
+    const saved = localStorage.getItem(key)?.replace(/\s+/g, " ").trim().slice(0, 24) ?? "";
+    if (saved) return saved;
+    const raw = localStorage.getItem(`vibe-room:${room}`);
+    if (raw) {
+      const fromRoom = (JSON.parse(raw) as { name?: string }).name?.replace(/\s+/g, " ").trim().slice(0, 24) ?? "";
+      if (fromRoom) {
+        localStorage.setItem(key, fromRoom);
+        return fromRoom;
+      }
+    }
+  } catch {
+    /* private mode */
+  }
+  const legacy = sessionStorage.getItem("vibe-name")?.replace(/\s+/g, " ").trim().slice(0, 24) ?? "";
+  const name = legacy || `Anon ${Math.floor(1000 + Math.random() * 9000)}`;
+  try {
+    localStorage.setItem(key, name);
+  } catch {
+    /* private mode */
+  }
   return name;
+}
+
+function storeName(room: string, name: string) {
+  try {
+    localStorage.setItem(`vibe-name:${room}`, name);
+  } catch {
+    /* private mode */
+  }
 }
 
 function readClean() {
@@ -717,8 +743,9 @@ export function VibeExplorer() {
   const [color, setColor] = useState(CLOTHES[0]);
 
   useEffect(() => {
-    setRoom(readRoom());
-    setName(readName());
+    const nextRoom = readRoom();
+    setRoom(nextRoom);
+    setName(readName(nextRoom));
     setColor(readColor());
     const url = new URL(window.location.href);
     if (url.searchParams.has("v")) {
@@ -735,12 +762,13 @@ export function VibeExplorer() {
     else url.searchParams.set("room", next);
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
     setRoom(next);
+    setName(readName(next));
   };
 
   const commitName = (next: string) => {
     const clean = next.replace(/\s+/g, " ").trim().slice(0, 24);
     if (!clean || clean === name) return;
-    sessionStorage.setItem("vibe-name", clean);
+    storeName(room, clean);
     setName(clean);
   };
 
