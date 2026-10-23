@@ -38,6 +38,8 @@ export type Status = {
   nextCost: number;
   nextName: string;
   nextGift: string;
+  devoted: number;
+  devotionNeed: number;
   singing: boolean;
   sitting: boolean;
   quiet: boolean;
@@ -64,11 +66,11 @@ const ACTIONS: Action[] = ["idle", "walk", "dance", "sit", "quiet", "sing", "wav
 const WALK_SPEED = 6.6;
 const WORLD = 54;
 const RANKS = [
-  { name: "Neighbor", cost: 0, basket: 12, song: 8.3, gift: "You are part of the meadow." },
-  { name: "Helper", cost: 8, basket: 16, song: 10, gift: "Your basket holds more." },
-  { name: "Keeper", cost: 20, basket: 16, song: 14, gift: "Your song carries farther." },
-  { name: "Host", cost: 36, basket: 20, song: 14, gift: "A small light stays with you." },
-  { name: "Guide", cost: 60, basket: 20, song: 18, gift: "You can call neighbors to the stall." },
+  { name: "Neighbor", cost: 0, basket: 12, song: 8.3, devotion: 0, gift: "You are part of the meadow." },
+  { name: "Helper", cost: 8, basket: 16, song: 10, devotion: 90, gift: "Your basket holds more." },
+  { name: "Keeper", cost: 20, basket: 16, song: 14, devotion: 240, gift: "Your song carries farther." },
+  { name: "Host", cost: 36, basket: 20, song: 14, devotion: 480, gift: "A small light stays with you." },
+  { name: "Guide", cost: 60, basket: 20, song: 18, devotion: 900, gift: "You can call neighbors to the market." },
 ] as const;
 
 declare global {
@@ -588,12 +590,16 @@ export class VillageWorld {
   private cdWave = 0;
   private cdMilk = 0;
   private cdEggs = 0;
+  private devoted = 0;
+  private devotedSave = 0;
+  private domeNoted = false;
   private readonly scores = new Map<string, number>();
   private board: THREE.Sprite | null = null;
   private readonly marketPile: THREE.Mesh[] = [];
   private readonly eggPile: THREE.Mesh[] = [];
   private pail: THREE.Mesh | null = null;
-  private readonly marketAt = { x: 17.8, z: 7.5 };
+  private readonly marketAt = { x: 21, z: 8 };
+  private readonly domeAt = { x: -14, z: -8, r: 3.7 };
   private swimming = false;
   private nextVillagerNote = 3;
   private lastFeed = "";
@@ -876,10 +882,12 @@ export class VillageWorld {
     }
     const next = RANKS[this.rankIndex() + 1];
     const need = next.cost - this.spent;
-    if (this.unspent() < need) {
-      this.hooks.onToast(
-        `${need} service set aside makes a ${next.name}. You have ${this.unspent()} ready. ${this.practiceLine()}`,
-      );
+    const timeShort = Math.max(0, next.devotion - this.devoted);
+    if (this.unspent() < need || timeShort > 0) {
+      const parts: string[] = [];
+      if (this.unspent() < need) parts.push(`${need} service set aside`);
+      if (timeShort > 0) parts.push(`${this.clock(timeShort)} of quiet in the dome`);
+      this.hooks.onToast(`A ${next.name} still needs ${parts.join(" and ")}.`);
       return;
     }
     this.spent = next.cost;
@@ -893,7 +901,7 @@ export class VillageWorld {
   private callTable() {
     if (this.rankIndex() < RANKS.length - 1) return;
     if (this.marketFood + this.stallMilk + this.stallEggs <= 0) {
-      this.hooks.onToast("The stall is empty. Set food out before you call anyone.");
+      this.hooks.onToast("The market is empty. Set food out before you call anyone.");
       return;
     }
     this.tableUntil = this.elapsed + 16;
@@ -991,6 +999,16 @@ export class VillageWorld {
         progress: this.elapsed < this.cdEggs ? 1 : hen && hen.until <= Date.now() ? 0.5 : 0,
         reward: 1,
         state: this.elapsed < this.cdEggs ? "done" : hen ? "doing" : "ready",
+      },
+      {
+        id: "dome",
+        title: "Keep time in the dome",
+        detail: this.inDome()
+          ? "Stay seated or quiet. The dome is counting."
+          : "The pale dome is southwest of the fire.",
+        progress: this.rankIndex() >= RANKS.length - 1 ? 1 : Math.min(1, this.devoted / Math.max(1, RANKS[this.rankIndex() + 1].devotion)),
+        reward: 0,
+        state: this.inDome() && (this.mode === "sit" || this.mode === "quiet") ? "doing" : "ready",
       },
     ];
   }
@@ -1366,7 +1384,7 @@ export class VillageWorld {
 
   leaveBasket(): number {
     if (!this.nearMarket()) {
-      this.hooks.onToast("The market is the red stall, east of the fire.");
+      this.hooks.onToast("The market hall is east of the fire.");
       return 0;
     }
     if (this.food <= 0 && this.milk <= 0 && this.eggs <= 0) {
@@ -1402,7 +1420,7 @@ export class VillageWorld {
 
   takeFromMarket(): number {
     if (!this.nearMarket()) {
-      this.hooks.onToast("The market is the red stall, east of the fire.");
+      this.hooks.onToast("The market hall is east of the fire.");
       return 0;
     }
     const good: Good | null =
@@ -1499,8 +1517,33 @@ export class VillageWorld {
     if (extra > 0) this.hooks.onMarket?.({ op: "give", greens: extra, milk: 0, eggs: 0 });
   }
 
+  private clock(seconds: number) {
+    const total = Math.max(0, Math.floor(seconds));
+    const minutes = Math.floor(total / 60);
+    const rest = total % 60;
+    return `${minutes}:${String(rest).padStart(2, "0")}`;
+  }
+
+  private inDome() {
+    return Math.hypot(this.px - this.domeAt.x, this.pz - this.domeAt.z) < this.domeAt.r;
+  }
+
+  private stepDevotion(dt: number) {
+    if (!this.inDome() || (this.mode !== "sit" && this.mode !== "quiet")) return;
+    if (!this.domeNoted) {
+      this.domeNoted = true;
+      this.hooks.onToast("The dome keeps the time. Stay seated or quiet.");
+    }
+    this.devoted += dt;
+    this.devotedSave += dt;
+    if (this.devotedSave < 12) return;
+    this.devotedSave = 0;
+    this.persistRoom();
+    this.emitStatus();
+  }
+
   private nearMarket() {
-    return Math.hypot(this.px - this.marketAt.x, this.pz - this.marketAt.z) < 6.2;
+    return Math.hypot(this.px - this.marketAt.x, this.pz - this.marketAt.z) < 7.4;
   }
 
   private addService(name: string, amount: number) {
@@ -1522,6 +1565,7 @@ export class VillageWorld {
       stallEggs?: number;
       food?: number;
       spent?: number;
+      devoted?: number;
       scores?: { n: string; p: number }[];
     } | null = null;
     try {
@@ -1545,6 +1589,8 @@ export class VillageWorld {
     this.service = Number.isFinite(service) ? Math.max(0, Math.min(999, Math.floor(service))) : 0;
     const spent = Number(saved?.spent ?? 0);
     this.spent = Number.isFinite(spent) ? Math.max(0, Math.min(this.service, Math.floor(spent))) : 0;
+    const devoted = Number(saved?.devoted ?? 0);
+    this.devoted = Number.isFinite(devoted) ? Math.max(0, Math.min(24 * 3600, devoted)) : 0;
     this.marketFood = Number.isFinite(market) ? Math.max(0, Math.min(99, Math.floor(market))) : 0;
     const stallMilk = Number(saved?.stallMilk ?? 0);
     const stallEggs = Number(saved?.stallEggs ?? 0);
@@ -1581,6 +1627,7 @@ export class VillageWorld {
           milk: this.milk,
           eggs: this.eggs,
           food: this.food,
+          devoted: Math.floor(this.devoted),
           scores,
         }),
       );
@@ -1840,7 +1887,9 @@ export class VillageWorld {
       rank: this.rank().name,
       nextCost: this.rankIndex() >= RANKS.length - 1 ? 0 : nextRank.cost - this.spent,
       nextName: this.rankIndex() >= RANKS.length - 1 ? "" : nextRank.name,
-      nextGift: this.rankIndex() >= RANKS.length - 1 ? "You can call neighbors to the stall." : nextRank.gift,
+      nextGift: this.rankIndex() >= RANKS.length - 1 ? "You can call neighbors to the market." : nextRank.gift,
+      devoted: Math.floor(this.devoted),
+      devotionNeed: this.rankIndex() >= RANKS.length - 1 ? 0 : Math.max(0, Math.ceil(nextRank.devotion - this.devoted)),
       singing: this.mode === "sing",
       sitting: this.mode === "sit",
       quiet: this.mode === "quiet",
@@ -2015,6 +2064,7 @@ export class VillageWorld {
     this.stepPeople(dt, gather);
     this.stepMeal(gather);
     this.stepPractice(dt);
+    this.stepDevotion(dt);
     this.noteVillagers();
     this.stepCritters(dt);
     this.stepRemotes(dt);
@@ -2060,9 +2110,9 @@ export class VillageWorld {
     else if (sprouts) next = "Tend a sprout to hurry it.";
     else if (cow && cow.until <= Date.now()) next = "A cow is close. You can take milk.";
     else if (hen && hen.until <= Date.now()) next = "A hen is close. You can gather an egg.";
-    else if (this.nearMarket()) {
-      next = `Stall · greens ${this.marketFood}, milk ${this.stallMilk}, eggs ${this.stallEggs}.`;
-    } else if (person) next = `${person.name} is here. Tap them to wave.`;
+    else if (this.nearMarket()) next = `Market · greens ${this.marketFood}, milk ${this.stallMilk}, eggs ${this.stallEggs}.`;
+    else if (this.inDome()) next = "The dome is here. Sit or be quiet, and it keeps the time.";
+    else if (person) next = `${person.name} is here. Tap them to wave.`;
     else if (this.food + this.milk + this.eggs > 0) next = `Carrying greens ${this.food}, milk ${this.milk}, eggs ${this.eggs}.`;
     else next = this.practiceLine();
     if (next !== this.nearby) {
@@ -2442,6 +2492,7 @@ export class VillageWorld {
     this.addHuts();
     this.addWell();
     this.addMarket();
+    this.addDome();
     this.addFarm();
     this.addScatter(rng);
     this.addHorizon();
@@ -2648,52 +2699,118 @@ export class VillageWorld {
   }
 
   private addMarket() {
-    const wood = new THREE.MeshStandardMaterial({ color: 0x6a4632, roughness: 0.85 });
-    const posts: [number, number][] = [
-      [16.2, 6.2],
-      [19.4, 6.2],
-      [16.2, 8.8],
-      [19.4, 8.8],
-    ];
-    posts.forEach(([x, z]) => {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.1, 0.18), wood);
-      post.position.set(x, 1.05, z);
+    const cx = 21;
+    const cz = 8;
+    const plaster = new THREE.MeshStandardMaterial({ color: 0xf3e6d4, roughness: 0.84 });
+    const timber = new THREE.MeshStandardMaterial({ color: 0x6a4632, roughness: 0.88 });
+    const tile = new THREE.MeshStandardMaterial({ color: 0x9c4332, roughness: 0.74 });
+    const stone = new THREE.MeshStandardMaterial({ color: 0xd2c3ae, roughness: 0.96 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0xe7d3b4, roughness: 0.9 });
+
+    const court = new THREE.Mesh(new THREE.BoxGeometry(12, 0.08, 9.2), stone);
+    court.position.set(cx - 1.2, 0.04, cz);
+    court.receiveShadow = true;
+    this.scene.add(court);
+    for (let i = 0; i < 6; i += 1) {
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.05, 0.85), stone);
+      slab.position.set(cx - 7.4 - i * 1.45, 0.03, cz + (i % 2 === 0 ? -0.35 : 0.4));
+      slab.receiveShadow = true;
+      this.scene.add(slab);
+    }
+
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.12, 5.6), floorMat);
+    floor.position.set(cx + 0.5, 0.1, cz);
+    floor.receiveShadow = true;
+    this.scene.add(floor);
+
+    const back = new THREE.Mesh(new THREE.BoxGeometry(0.32, 2.8, 5.8), plaster);
+    back.position.set(cx + 4.1, 1.5, cz);
+    back.castShadow = true;
+    back.receiveShadow = true;
+    this.scene.add(back);
+    [-1.6, 0, 1.6].forEach((dz) => this.addCollider(cx + 4.1, cz + dz, 0.7));
+
+    [-2.75, 2.75].forEach((dz) => {
+      const side = new THREE.Mesh(new THREE.BoxGeometry(6.6, 2.55, 0.28), plaster);
+      side.position.set(cx + 0.7, 1.38, cz + dz);
+      side.castShadow = true;
+      side.receiveShadow = true;
+      this.scene.add(side);
+      [-1.4, 0.8, 2.6].forEach((dx) => this.addCollider(cx + dx, cz + dz, 0.55));
+    });
+
+    [-2.2, 0, 2.2].forEach((dz) => {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.24, 2.75, 0.24), timber);
+      post.position.set(cx - 2.55, 1.48, cz + dz);
       post.castShadow = true;
       this.scene.add(post);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.12, 0.4), timber);
+      cap.position.set(cx - 2.55, 2.9, cz + dz);
+      this.scene.add(cap);
     });
-    const awning = new THREE.Mesh(
-      new THREE.BoxGeometry(3.8, 0.12, 3.2),
-      new THREE.MeshStandardMaterial({ color: 0xc45c4a, roughness: 0.7 }),
-    );
-    awning.position.set(17.8, 2.15, 7.5);
-    awning.castShadow = true;
-    this.scene.add(awning);
-    const crateMat = new THREE.MeshStandardMaterial({ color: 0xa9744a, roughness: 0.85 });
-    const crate = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.55, 0.7), crateMat);
-    crate.position.set(17.2, 0.3, 7.2);
-    crate.castShadow = true;
-    this.scene.add(crate);
-    const fruitMat = new THREE.MeshStandardMaterial({ color: 0xd3543c, roughness: 0.55 });
-    for (let i = 0; i < 4; i += 1) {
-      const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8), fruitMat);
-      fruit.position.set(17.05 + (i % 2) * 0.28, 0.68, 7.05 + Math.floor(i / 2) * 0.26);
-      this.scene.add(fruit);
-    }
-    this.addCollider(17.8, 7.5, 1.9);
+
+    const south = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.14, 3.4), tile);
+    south.position.set(cx + 0.45, 3.25, cz - 1.35);
+    south.rotation.x = 0.42;
+    south.castShadow = true;
+    this.scene.add(south);
+    const north = new THREE.Mesh(new THREE.BoxGeometry(7.8, 0.14, 3.4), tile);
+    north.position.set(cx + 0.45, 3.25, cz + 1.35);
+    north.rotation.x = -0.42;
+    north.castShadow = true;
+    this.scene.add(north);
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(7.9, 0.12, 0.18), timber);
+    ridge.position.set(cx + 0.45, 3.72, cz);
+    this.scene.add(ridge);
+
+    const counters: { z: number; top: number }[] = [
+      { z: cz - 1.7, top: 0x6e9a52 },
+      { z: cz, top: 0xf7f4ee },
+      { z: cz + 1.7, top: 0xf6e7c4 },
+    ];
+    counters.forEach((counter) => {
+      const base = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.72, 1.15), timber);
+      base.position.set(cx + 2.7, 0.46, counter.z);
+      base.castShadow = true;
+      this.scene.add(base);
+      const top = new THREE.Mesh(
+        new THREE.BoxGeometry(1.6, 0.08, 1.25),
+        new THREE.MeshStandardMaterial({ color: counter.top, roughness: 0.7 }),
+      );
+      top.position.set(cx + 2.7, 0.86, counter.z);
+      this.scene.add(top);
+    });
+
+    const lanternMat = new THREE.MeshStandardMaterial({
+      color: 0xffe0a0,
+      emissive: 0xffc46b,
+      emissiveIntensity: 0.7,
+      roughness: 0.4,
+    });
+    [-2.2, 2.2].forEach((dz) => {
+      const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.22), lanternMat);
+      lamp.position.set(cx - 2.55, 2.35, cz + dz);
+      this.scene.add(lamp);
+    });
+    const hallLight = new THREE.PointLight(0xffd7a8, 6, 14, 2);
+    hallLight.position.set(cx + 0.4, 2.4, cz);
+    this.scene.add(hallLight);
+
     const sign = makeSprite("Market", "rgba(92,59,46,0.92)", "#f6efe6", 3.15);
-    sign.position.set(17.8, 3.15, 7.5);
+    sign.position.set(cx - 2.4, 3.35, cz);
     this.scene.add(sign);
     this.board = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: paintBoard(["0 set out", "Be the first"]), transparent: true, depthWrite: false }),
+      new THREE.SpriteMaterial({ map: paintBoard(["Greens 0", "Milk 0", "Eggs 0"]), transparent: true, depthWrite: false }),
     );
-    this.board.position.set(17.8, 1.65, 10.1);
+    this.board.position.set(cx - 2.2, 1.7, cz + 3.55);
     this.board.scale.set(2.8, 2.05, 1);
     this.board.renderOrder = 6;
     this.scene.add(this.board);
+
     const pileMat = new THREE.MeshStandardMaterial({ color: 0xd3543c, roughness: 0.55 });
     for (let i = 0; i < 8; i += 1) {
-      const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8), pileMat);
-      fruit.position.set(18.3 + (i % 4) * 0.28, 0.62, 7.55 + Math.floor(i / 4) * 0.28);
+      const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), pileMat);
+      fruit.position.set(cx + 2.45 + (i % 4) * 0.16, 1.02, cz - 1.7 + Math.floor(i / 4) * 0.16);
       fruit.visible = false;
       fruit.castShadow = true;
       this.scene.add(fruit);
@@ -2701,23 +2818,75 @@ export class VillageWorld {
     }
     const eggMat = new THREE.MeshStandardMaterial({ color: 0xf7f1e4, roughness: 0.45 });
     for (let i = 0; i < 6; i += 1) {
-      const egg = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6), eggMat);
+      const egg = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), eggMat);
       egg.scale.set(0.85, 1.15, 0.85);
-      egg.position.set(16.55 + (i % 3) * 0.22, 0.62, 8.05 + Math.floor(i / 3) * 0.22);
+      egg.position.set(cx + 2.5 + (i % 3) * 0.18, 1.02, cz + 1.55 + Math.floor(i / 3) * 0.16);
       egg.visible = false;
       egg.castShadow = true;
       this.scene.add(egg);
       this.eggPile.push(egg);
     }
     this.pail = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16, 0.14, 0.28, 8),
-      new THREE.MeshStandardMaterial({ color: 0xf4f7fb, roughness: 0.35, metalness: 0.15 }),
+      new THREE.CylinderGeometry(0.18, 0.16, 0.32, 10),
+      new THREE.MeshStandardMaterial({ color: 0xf4f7fb, roughness: 0.32, metalness: 0.2 }),
     );
-    this.pail.position.set(18.55, 0.2, 6.7);
+    this.pail.position.set(cx + 2.7, 1.08, cz);
     this.pail.visible = false;
     this.pail.castShadow = true;
     this.scene.add(this.pail);
     this.refreshBoard();
+  }
+
+  private addDome() {
+    const x = this.domeAt.x;
+    const z = this.domeAt.z;
+    const stone = new THREE.MeshStandardMaterial({ color: 0xd9cbb8, roughness: 0.9 });
+    const plaster = new THREE.MeshStandardMaterial({
+      color: 0xf7f1e6,
+      roughness: 0.48,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.94,
+    });
+    const timber = new THREE.MeshStandardMaterial({ color: 0x6a4632, roughness: 0.86 });
+    const floor = new THREE.Mesh(new THREE.CylinderGeometry(4.3, 4.45, 0.14, 28), stone);
+    floor.position.set(x, 0.07, z);
+    floor.receiveShadow = true;
+    this.scene.add(floor);
+    const lip = new THREE.Mesh(new THREE.TorusGeometry(4.15, 0.12, 8, 36), stone);
+    lip.rotation.x = Math.PI / 2;
+    lip.position.set(x, 0.16, z);
+    this.scene.add(lip);
+    for (let i = 0; i < 8; i += 1) {
+      const a = (i / 8) * Math.PI * 2;
+      const px = x + Math.cos(a) * 3.55;
+      const pz = z + Math.sin(a) * 3.55;
+      const column = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 2.15, 8), timber);
+      column.position.set(px, 1.15, pz);
+      column.castShadow = true;
+      this.scene.add(column);
+      this.addCollider(px, pz, 0.32);
+    }
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(3.85, 28, 16, 0, Math.PI * 2, 0, Math.PI / 2), plaster);
+    dome.position.set(x, 2.2, z);
+    dome.castShadow = true;
+    this.scene.add(dome);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.86, 0.08, 8, 40), timber);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(x, 2.2, z);
+    this.scene.add(ring);
+    const mat = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.15, 1.25, 0.08, 16),
+      new THREE.MeshStandardMaterial({ color: 0xc45c4a, roughness: 0.8 }),
+    );
+    mat.position.set(x, 0.18, z);
+    this.scene.add(mat);
+    const glow = new THREE.PointLight(0xffe0b0, 4.5, 10, 2);
+    glow.position.set(x, 2.4, z);
+    this.scene.add(glow);
+    const sign = makeSprite("Dome", "rgba(92,59,46,0.92)", "#f6efe6", 3.15);
+    sign.position.set(x, 4.5, z);
+    this.scene.add(sign);
   }
 
   private addFarm() {

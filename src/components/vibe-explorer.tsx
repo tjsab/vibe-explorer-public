@@ -156,6 +156,8 @@ function Village({
     nextCost: 8,
     nextName: "Helper",
     nextGift: "Your basket holds more.",
+    devoted: 0,
+    devotionNeed: 90,
     singing: false,
     sitting: false,
     quiet: false,
@@ -655,7 +657,7 @@ function Village({
               <article key={task.id} className="vibe-task" data-state={task.state}>
                 <div className="vibe-task-top">
                   <strong>{task.title}</strong>
-                  <span>+{task.reward}</span>
+                  <span>{task.reward > 0 ? `+${task.reward}` : ""}</span>
                 </div>
                 <p>{task.detail}</p>
                 <div className="vibe-meter" aria-hidden="true">
@@ -675,6 +677,12 @@ function Village({
               </button>
             </header>
             <p>Service done {status.service}. Ready to use {status.ready}.</p>
+            <p>
+              Dome time {Math.floor(status.devoted / 60)}:{String(status.devoted % 60).padStart(2, "0")}.
+              {status.devotionNeed > 0
+                ? ` The next rise still wants ${Math.floor(status.devotionNeed / 60)}:${String(status.devotionNeed % 60).padStart(2, "0")} of quiet there.`
+                : " The dome has given enough time for this step."}
+            </p>
             {status.nextCost > 0 ? (
               <p>
                 Next is {status.nextName}, for {status.nextCost}. {status.nextGift}
