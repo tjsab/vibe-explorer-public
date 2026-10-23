@@ -557,6 +557,7 @@ export class VillageWorld {
   private joyY = 0;
   private readonly lilies: THREE.Object3D[] = [];
   private readonly birds: { mesh: THREE.Group; a: number; r: number; y: number; s: number }[] = [];
+  private readonly butterflies: { mesh: THREE.Group; a: number; x: number; z: number; y: number }[] = [];
   private cloudMesh: THREE.InstancedMesh | null = null;
   private readonly cloudData: { x: number; y: number; z: number; s: number }[] = [];
   private readonly spin = new THREE.Object3D();
@@ -2072,6 +2073,7 @@ export class VillageWorld {
     this.stepFire();
     this.stepFlies();
     this.stepBirds(dt);
+    this.stepButterflies();
     this.stepClouds();
     this.stepLilies();
     this.syncCrops();
@@ -2990,7 +2992,7 @@ export class VillageWorld {
   }
 
   private blocked(x: number, z: number) {
-    if (x * x + z * z < 16 * 16) return true;
+    if (x * x + z * z < 8.6 * 8.6) return true;
     if (Math.hypot(x - 20, z + 10) < 13) return true;
     if (x > -40 && x < -20 && z > -20 && z < 2) return true;
     if (Math.hypot(x + 16, z - 12) < 6) return true;
@@ -2999,7 +3001,8 @@ export class VillageWorld {
     if (Math.hypot(x - 26, z + 16) < 6) return true;
     if (Math.abs(x) < 3.2 && z > -24 && z < 20) return true;
     if (Math.abs(z - 2) < 2.6 && x > -20 && x < 22) return true;
-    if (Math.hypot(x - 17.8, z - 7.5) < 4) return true;
+    if (Math.hypot(x - 21, z - 8) < 6.6) return true;
+    if (Math.hypot(x + 14, z + 8) < 5.2) return true;
     if (Math.hypot(x + 6, z - 18) < 3) return true;
     return false;
   }
@@ -3156,6 +3159,197 @@ export class VillageWorld {
       caps.setMatrixAt(i, dummy.matrix);
     }
     this.scene.add(caps);
+    this.addMeadow(rng);
+  }
+
+  private addMeadow(rng: () => number) {
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+    const open: { x: number; z: number }[] = [];
+    let guard = 0;
+    while (open.length < 240 && guard < 1600) {
+      guard += 1;
+      const ang = rng() * Math.PI * 2;
+      const rad = 9 + rng() * 40;
+      const x = Math.cos(ang) * rad;
+      const z = Math.sin(ang) * rad;
+      if (this.blocked(x, z)) continue;
+      open.push({ x, z });
+    }
+
+    const greens = [0x3c8a42, 0x67a85a, 0x2c6b34, 0x8fbf6a];
+    const blades = new THREE.InstancedMesh(
+      new THREE.ConeGeometry(0.1, 0.46, 4),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92 }),
+      open.length,
+    );
+    open.forEach((spot, i) => {
+      dummy.position.set(spot.x, 0.16, spot.z);
+      dummy.scale.setScalar(0.6 + rng() * 1.15);
+      dummy.rotation.set((rng() - 0.5) * 0.35, rng() * 6, (rng() - 0.5) * 0.35);
+      dummy.updateMatrix();
+      blades.setMatrixAt(i, dummy.matrix);
+      color.set(greens[i % greens.length]);
+      blades.setColorAt(i, color);
+    });
+    blades.instanceColor!.needsUpdate = true;
+    this.scene.add(blades);
+
+    const clover = new THREE.InstancedMesh(
+      new THREE.CircleGeometry(0.55, 7),
+      new THREE.MeshStandardMaterial({ color: 0x3f7a3c, roughness: 1 }),
+      48,
+    );
+    for (let i = 0; i < 48; i += 1) {
+      const spot = open[i * 4];
+      if (!spot) break;
+      dummy.position.set(spot.x, 0.03, spot.z);
+      dummy.rotation.set(-Math.PI / 2, 0, rng() * 3);
+      dummy.scale.setScalar(0.7 + rng() * 0.8);
+      dummy.updateMatrix();
+      clover.setMatrixAt(i, dummy.matrix);
+    }
+    this.scene.add(clover);
+
+    const stemMat = new THREE.MeshStandardMaterial({ color: 0x3d6b32, roughness: 0.85 });
+    const petalMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+    const petalColors = [0xf2b6c6, 0xffd56a, 0xf7f4ee, 0xee8cab, 0xb7c7ee, 0xf0c27a];
+    const stems = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.02, 0.025, 0.32, 4), stemMat, 160);
+    const petals = new THREE.InstancedMesh(new THREE.SphereGeometry(0.09, 6, 5), petalMat, 160);
+    let n = 0;
+    for (let c = 0; c < 18 && n < 160; c += 1) {
+      let cx = 0;
+      let cz = 0;
+      let found = false;
+      for (let t = 0; t < 12; t += 1) {
+        const ang = rng() * Math.PI * 2;
+        const rad = 10 + rng() * 34;
+        cx = Math.cos(ang) * rad;
+        cz = Math.sin(ang) * rad;
+        if (!this.blocked(cx, cz)) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) continue;
+      const count = 7 + Math.floor(rng() * 5);
+      for (let k = 0; k < count && n < 160; k += 1) {
+        const x = cx + (rng() - 0.5) * 2.2;
+        const z = cz + (rng() - 0.5) * 2.2;
+        if (this.blocked(x, z)) continue;
+        dummy.position.set(x, 0.16, z);
+        dummy.scale.setScalar(0.8 + rng() * 0.5);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        stems.setMatrixAt(n, dummy.matrix);
+        dummy.position.set(x, 0.36, z);
+        dummy.scale.setScalar(0.75 + rng() * 0.7);
+        dummy.updateMatrix();
+        petals.setMatrixAt(n, dummy.matrix);
+        color.set(petalColors[(c + k) % petalColors.length]);
+        petals.setColorAt(n, color);
+        n += 1;
+      }
+    }
+    stems.count = n;
+    petals.count = n;
+    petals.instanceColor!.needsUpdate = true;
+    this.scene.add(stems, petals);
+
+    const fernMat = new THREE.MeshStandardMaterial({ color: 0x2f6a38, roughness: 0.86 });
+    const ferns = new THREE.InstancedMesh(new THREE.ConeGeometry(0.34, 0.22, 5), fernMat, 42);
+    let fern = 0;
+    let fernTries = 0;
+    while (fern < 42 && fernTries < 300) {
+      fernTries += 1;
+      const ang = rng() * Math.PI * 2;
+      const rad = 14 + rng() * 30;
+      const x = Math.cos(ang) * rad;
+      const z = Math.sin(ang) * rad;
+      if (this.blocked(x, z)) continue;
+      dummy.position.set(x, 0.08, z);
+      dummy.rotation.set(0, rng() * 6, 0);
+      dummy.scale.setScalar(0.7 + rng() * 0.9);
+      dummy.updateMatrix();
+      ferns.setMatrixAt(fern, dummy.matrix);
+      fern += 1;
+    }
+    ferns.count = fern;
+    this.scene.add(ferns);
+
+    const grove: { x: number; z: number; s: number }[] = [];
+    guard = 0;
+    while (grove.length < 14 && guard < 400) {
+      guard += 1;
+      const ang = rng() * Math.PI * 2;
+      const rad = 16 + rng() * 12;
+      const x = Math.cos(ang) * rad;
+      const z = Math.sin(ang) * rad;
+      if (this.blocked(x, z)) continue;
+      if (grove.some((tree) => Math.hypot(tree.x - x, tree.z - z) < 4.2)) continue;
+      grove.push({ x, z, s: 0.72 + rng() * 0.35 });
+    }
+    if (grove.length) {
+      const trunks = new THREE.InstancedMesh(
+        new THREE.CylinderGeometry(0.16, 0.24, 2, 6),
+        new THREE.MeshStandardMaterial({ color: 0x6b4a32, roughness: 0.9 }),
+        grove.length,
+      );
+      const leaves = new THREE.InstancedMesh(
+        new THREE.SphereGeometry(1.15, 7, 5),
+        new THREE.MeshStandardMaterial({ color: 0x2f7d38, roughness: 0.82 }),
+        grove.length,
+      );
+      grove.forEach((tree, i) => {
+        dummy.position.set(tree.x, 1.0 * tree.s, tree.z);
+        dummy.scale.setScalar(tree.s);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        trunks.setMatrixAt(i, dummy.matrix);
+        dummy.position.set(tree.x, 2.15 * tree.s, tree.z);
+        dummy.scale.setScalar(tree.s);
+        dummy.updateMatrix();
+        leaves.setMatrixAt(i, dummy.matrix);
+        color.set(i % 2 === 0 ? 0x347f3e : 0x4e9a52);
+        leaves.setColorAt(i, color);
+        this.addCollider(tree.x, tree.z, 0.35 * tree.s);
+      });
+      leaves.instanceColor!.needsUpdate = true;
+      this.scene.add(trunks, leaves);
+    }
+
+    const wingColors = [0xfff6d8, 0xf2b6c6, 0xffd56a, 0xf7f4ee];
+    for (let i = 0; i < 8; i += 1) {
+      const mesh = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({
+        color: wingColors[i % wingColors.length],
+        roughness: 0.45,
+        side: THREE.DoubleSide,
+      });
+      const left = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.14), mat);
+      left.position.x = -0.1;
+      const right = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.14), mat);
+      right.position.x = 0.1;
+      mesh.add(left, right);
+      const ang = rng() * Math.PI * 2;
+      const rad = 12 + rng() * 18;
+      this.scene.add(mesh);
+      this.butterflies.push({ mesh, a: rng() * 6, x: Math.cos(ang) * rad, z: Math.sin(ang) * rad, y: 1.1 + rng() * 0.8 });
+    }
+  }
+
+  private stepButterflies() {
+    for (const bug of this.butterflies) {
+      bug.a += 0.018;
+      bug.mesh.position.set(
+        bug.x + Math.sin(bug.a) * 1.6,
+        bug.y + Math.sin(bug.a * 2.1) * 0.28,
+        bug.z + Math.cos(bug.a * 0.7) * 1.2,
+      );
+      const flap = Math.sin(this.elapsed * 16 + bug.a) * 0.9;
+      bug.mesh.children[0].rotation.y = flap;
+      bug.mesh.children[1].rotation.y = -flap;
+    }
   }
 
   private addPeople() {
