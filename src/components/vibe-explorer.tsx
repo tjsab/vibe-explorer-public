@@ -164,6 +164,7 @@ function Village({
   });
   const [sheet, setSheet] = useState<null | "tasks" | "practice">(null);
   const [group, setGroup] = useState<"do" | "be" | "give">("do");
+  const [chat, setChat] = useState("");
   const [roomDraft, setRoomDraft] = useState(room);
   const [copied, setCopied] = useState(false);
   const [clean, setClean] = useState(readClean);
