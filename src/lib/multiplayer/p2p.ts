@@ -240,6 +240,7 @@ export class P2PRoom {
   private voiceEpoch = 0;
   private voiceCtx: AudioContext | null = null;
   private lastRelay = 0;
+  private muted = false;
 
   constructor(opts: P2PRoomOptions) {
     this.opts = opts;
@@ -295,12 +296,14 @@ export class P2PRoom {
   /** Positions go through the room too, so a blocked direct link still shows the person. */
   private relayPose(data: unknown) {
     const pose = data as { k?: string };
-    if (pose?.k !== "pose" || this.peers.size === 0) return;
+    if (pose?.k !== "pose") return;
+    const need = [...this.peers.entries()].filter(([, slot]) => slot.state?.readyState !== "open").map(([id]) => id);
+    if (!need.length) return;
     const now = Date.now();
-    if (now - this.lastRelay < 300) return;
+    if (now - this.lastRelay < 450) return;
     this.lastRelay = now;
     const payload = { vibe: "pose", ...pose };
-    for (const id of this.peers.keys()) void this.sendSignal(id, "ice", payload);
+    for (const id of need) void this.sendSignal(id, "ice", payload);
   }
 
   /** Send reliably (ordered) to one peer, or to all when peerId is omitted. */
@@ -316,6 +319,13 @@ export class P2PRoom {
     const clean = name.replace(/\s+/g, " ").trim().slice(0, 24);
     if (!clean) return;
     this.opts.name = clean;
+  }
+
+  setMuted(on: boolean) {
+    this.muted = on;
+    this.mic?.getAudioTracks().forEach((track) => {
+      track.enabled = !on;
+    });
   }
 
   /** Start the mic and the speaker inside the button tap. Call this before any await. */
@@ -364,7 +374,7 @@ export class P2PRoom {
     if (!track) return "no-mic";
     try {
       this.voicePeer = peerId;
-      track.enabled = true;
+      track.enabled = !this.muted;
       const transceiver = this.voiceTransceiver(slot);
       if (transceiver.direction !== "sendrecv") transceiver.direction = "sendrecv";
       await transceiver.sender.replaceTrack(track);

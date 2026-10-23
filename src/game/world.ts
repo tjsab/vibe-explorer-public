@@ -408,8 +408,11 @@ function animateAvatar(group: THREE.Object3D, action: Action, elapsed: number) {
   const dot = group.getObjectByName("live-dot");
   if (dot) {
     const talking = group.userData.talking === true;
-    const s = talking ? 0.48 + Math.sin(elapsed * 8) * 0.08 : 0.32 + Math.sin(elapsed * 3.1) * 0.045;
+    const s = talking ? 0.92 + Math.sin(elapsed * 7) * 0.14 : 0.36;
     dot.scale.set(s, s, 1);
+    dot.position.y = talking ? 2.72 : dot.position.y;
+    const mat = (dot as THREE.Sprite).material;
+    if (!Array.isArray(mat)) mat.color.set(talking ? 0xffd56a : 0xffffff);
   }
 }
 
@@ -1196,6 +1199,10 @@ export class VillageWorld {
     const remote = this.remotes.get(id);
     if (!remote) return;
     remote.group.userData.talking = on;
+  }
+
+  setSelfTalking(on: boolean) {
+    this.player.userData.talking = on;
   }
 
   say(text: string) {

@@ -5,7 +5,6 @@ import {
   EyeOff,
   Flower2,
   Gift,
-  Hand,
   Link,
   Music,
   Phone,
@@ -47,22 +46,29 @@ function readRoom() {
 
 function readName(room: string) {
   const key = `vibe-name:${room}`;
+  const clean = (value: string | null | undefined) => value?.replace(/\s+/g, " ").trim().slice(0, 24) ?? "";
   try {
-    const saved = localStorage.getItem(key)?.replace(/\s+/g, " ").trim().slice(0, 24) ?? "";
+    const saved = clean(localStorage.getItem(key));
     if (saved) return saved;
-    const raw = localStorage.getItem(`vibe-room:${room}`);
-    if (raw) {
-      const fromRoom = (JSON.parse(raw) as { name?: string }).name?.replace(/\s+/g, " ").trim().slice(0, 24) ?? "";
-      if (fromRoom) {
-        localStorage.setItem(key, fromRoom);
-        return fromRoom;
-      }
-    }
   } catch {
     /* private mode */
   }
-  const legacy = sessionStorage.getItem("vibe-name")?.replace(/\s+/g, " ").trim().slice(0, 24) ?? "";
-  const name = legacy || `Anon ${Math.floor(1000 + Math.random() * 9000)}`;
+  let migrated = "";
+  try {
+    migrated = clean(sessionStorage.getItem("vibe-name"));
+    sessionStorage.removeItem("vibe-name");
+  } catch {
+    /* private mode */
+  }
+  if (!migrated) {
+    try {
+      const raw = localStorage.getItem(`vibe-room:${room}`);
+      if (raw) migrated = clean((JSON.parse(raw) as { name?: string }).name);
+    } catch {
+      /* old save */
+    }
+  }
+  const name = migrated || `Anon ${Math.floor(1000 + Math.random() * 9000)}`;
   try {
     localStorage.setItem(key, name);
   } catch {
@@ -87,20 +93,30 @@ function readClean() {
   }
 }
 
-function readTopHidden() {
+function readColor() {
   try {
-    return localStorage.getItem("vibe-top") === "0";
+    const saved = Number(localStorage.getItem("vibe-color") ?? "");
+    if (Number.isInteger(saved) && saved >= 0 && saved < CLOTHES.length) return CLOTHES[saved];
   } catch {
-    return false;
+    /* private mode */
   }
+  const i = Math.floor(Math.random() * CLOTHES.length);
+  try {
+    localStorage.setItem("vibe-color", String(i));
+  } catch {
+    /* private mode */
+  }
+  return CLOTHES[i];
 }
 
-function readColor() {
-  const saved = Number(sessionStorage.getItem("vibe-color-i") ?? "");
-  if (Number.isInteger(saved) && saved >= 0 && saved < CLOTHES.length) return CLOTHES[saved];
-  const i = Math.floor(Math.random() * CLOTHES.length);
-  sessionStorage.setItem("vibe-color-i", String(i));
-  return CLOTHES[i];
+function voiceLine(why: string | undefined, who: "you" | "them") {
+  if (why === "no-mic") {
+    return who === "you"
+      ? "Your microphone is blocked. Allow it for this page, then tap Talk."
+      : "Their microphone is blocked. They can allow it and try again.";
+  }
+  if (why === "not-ready") return "You can see each other, but voice isn't open yet. Stand close and tap Talk again.";
+  return "The voice path didn't open. Tap Talk again.";
 }
 
 function presenceLine(joined: boolean, peers: PeerInfo[]) {
@@ -108,14 +124,10 @@ function presenceLine(joined: boolean, peers: PeerInfo[]) {
   const label = (p: PeerInfo) => asAnon(p.name || "", p.id);
   const here = peers.filter((p) => p.connectionState === "connected" || p.relayed);
   const failed = peers.filter((p) => p.connectionState === "failed" || p.connectionState === "closed");
-  if (peers.length === 0) return "Just you and the villagers. Send the link to invite someone.";
-  if (here.length === 0 && failed.length === peers.length) {
-    return `${failed.map(label).join(", ")} couldn't connect directly. A strict network sometimes blocks the path.`;
-  }
+  if (peers.length === 0) return "Just you and the villagers.";
+  if (here.length === 0 && failed.length === peers.length) return "Someone is in the room, but voice may be blocked.";
   if (here.length === 0) return `${peers.map(label).join(", ")} is on the way.`;
-  const extra = peers.length - here.length;
-  const base = `Here with you: ${here.map(label).join(", ")}`;
-  return extra > 0 ? `${base}. ${extra} still finding a path.` : base;
+  return `Here: ${here.map(label).join(", ")}`;
 }
 
 function Village({
@@ -170,9 +182,9 @@ function Village({
   const [roomDraft, setRoomDraft] = useState(room);
   const [copied, setCopied] = useState(false);
   const [clean, setClean] = useState(readClean);
-  const [topHidden, setTopHidden] = useState(readTopHidden);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [call, setCall] = useState<CallState | null>(null);
+  const [muted, setMuted] = useState(false);
   const feedId = useRef(1);
   const seen = useRef(new Set<string>());
   const joyRef = useRef<HTMLDivElement>(null);
@@ -264,10 +276,11 @@ function Village({
           p2p.send({ k: "call-fail", why: result }, from);
           p2p.endVoice();
           setCall(null);
-          setToast(result === "no-mic" ? "Your microphone didn't open. Allow it and tap Talk again." : "The voice path isn't open yet. Tap Talk again.");
+          setToast(voiceLine(result, "you"));
           return;
         }
         world.setTalking(from, true);
+        world.setSelfTalking(true);
         setCall((prev) => ({ id: from, name: prev?.name ?? "Someone", phase: "live" }));
         setToast("You're talking. Voice only.");
       } else if (msg.k === "call-no") {
@@ -277,10 +290,11 @@ function Village({
       } else if (msg.k === "call-fail") {
         p2p.endVoice();
         setCall(null);
-        setToast(msg.why === "no-mic" ? "Their microphone didn't open." : "The voice path didn't open. Try Talk again.");
+        setToast(voiceLine(msg.why, msg.why === "no-mic" ? "them" : "you"));
       } else if (msg.k === "call-end") {
         p2p.endVoice();
         worldRef.current?.setTalking(from, false);
+        worldRef.current?.setSelfTalking(false);
         setCall(null);
         setToast("The talk rests.");
       }
@@ -304,9 +318,25 @@ function Village({
       if (p2p.peers.some((peer) => peer.id === call.id)) return;
       p2p.endVoice();
       worldRef.current?.setTalking(call.id, false);
+      worldRef.current?.setSelfTalking(false);
       setCall((current) => (current?.id === call.id ? null : current));
       setToast("The talk dropped.");
     }, Math.max(1000, left));
+    return () => window.clearTimeout(timer);
+  }, [call, p2p]);
+
+  useEffect(() => {
+    if (call?.phase !== "out") return;
+    const id = call.id;
+    const timer = window.setTimeout(() => {
+      setCall((current) => {
+        if (!current || current.id !== id || current.phase !== "out") return current;
+        p2p.send({ k: "call-end" }, id);
+        p2p.endVoice();
+        setToast("No answer. The talk can wait.");
+        return null;
+      });
+    }, 28000);
     return () => window.clearTimeout(timer);
   }, [call, p2p]);
 
@@ -436,7 +466,7 @@ function Village({
 
   useEffect(() => {
     if (!toast) return;
-    const id = window.setTimeout(() => setToast(""), 4200);
+    const id = window.setTimeout(() => setToast(""), 2800);
     return () => window.clearTimeout(id);
   }, [toast]);
 
@@ -471,15 +501,43 @@ function Village({
     });
   };
 
-  const toggleTop = () => {
-    setTopHidden((value) => {
-      const next = !value;
-      try {
-        localStorage.setItem("vibe-top", next ? "0" : "1");
-      } catch {
-        /* private mode */
-      }
-      return next;
+  const hangUp = () => {
+    if (!call || call.phase === "in") return;
+    p2p.send({ k: "call-end" }, call.id);
+    p2p.endVoice();
+    p2p.setMuted(false);
+    setMuted(false);
+    worldRef.current?.setTalking(call.id, false);
+    worldRef.current?.setSelfTalking(false);
+    worldRef.current?.announce(`${name} lets the talk rest.`);
+    setCall(null);
+    setToast("The talk rests.");
+  };
+
+  const startTalk = () => {
+    const near = worldRef.current?.nearestRemote(4.6);
+    if (!near) {
+      setToast("Walk closer. Talk only reaches someone beside you.");
+      return;
+    }
+    const ready = p2p.peers.some((p) => p.id === near.id && (p.connectionState === "connected" || p.connectionState === "connecting" || p.relayed));
+    if (!ready) {
+      setToast(`${near.name} is still on the way.`);
+      return;
+    }
+    const priming = p2p.primeVoice(near.id);
+    p2p.send({ k: "call", n: name }, near.id);
+    setCall({ id: near.id, name: near.name, phase: "out" });
+    setToast(`Asking ${near.name} to talk…`);
+    void priming.then((mic) => {
+      if (mic === "ok") return;
+      setCall((current) => {
+        if (!current || current.id !== near.id || current.phase === "live") return current;
+        p2p.send({ k: "call-fail", why: "no-mic" }, near.id);
+        p2p.endVoice();
+        setToast(voiceLine("no-mic", "you"));
+        return null;
+      });
     });
   };
 
@@ -505,7 +563,7 @@ function Village({
   };
 
   return (
-    <div className="vibe-stage" data-clean={clean ? "true" : "false"} data-top={topHidden ? "off" : "on"}>
+    <div className="vibe-stage" data-clean={clean ? "true" : "false"}>
       <canvas ref={canvasRef} className="vibe-canvas" />
       <button
         type="button"
@@ -560,20 +618,7 @@ function Village({
               </button>
             </form>
           </details>
-          <button type="button" className="vibe-toplink" onClick={toggleTop}>
-            Hide top
-          </button>
         </header>
-        {topHidden ? (
-          <button type="button" className="vibe-topback" onClick={toggleTop}>
-            Show top
-          </button>
-        ) : null}
-        <ol className="vibe-feed" aria-live="polite" aria-label="What the meadow is doing">
-          {feed.map((item) => (
-            <li key={item.id}>{item.text}</li>
-          ))}
-        </ol>
       </div>
 
       <div className="vibe-dock">
@@ -589,8 +634,10 @@ function Village({
           <p className="vibe-note vibe-glass">{toast}</p>
         ) : status.nearby ? (
           <p className="vibe-note vibe-glass">{status.nearby}</p>
+        ) : feed[0] ? (
+          <p className="vibe-note vibe-glass">{feed[0].text}</p>
         ) : (
-          <p className="vibe-note vibe-glass keys-hint">WASD to walk. Click a villager to talk.</p>
+          <p className="vibe-note vibe-glass keys-hint">WASD to walk. Tap a person to wave.</p>
         )}
         {call?.phase === "in" ? (
           <article className="vibe-talk vibe-glass">
@@ -608,7 +655,7 @@ function Village({
                     if (mic !== "ok") {
                       p2p.send({ k: "call-fail", why: "no-mic" }, call.id);
                       setCall(null);
-                      setToast("The microphone was blocked. Allow it for the page, then try again.");
+                      setToast(voiceLine("no-mic", "you"));
                       return;
                     }
                     setToast("Microphone is on. Connecting the voice…");
@@ -618,11 +665,12 @@ function Village({
                       p2p.send({ k: "call-fail", why: result }, call.id);
                       p2p.endVoice();
                       setCall(null);
-                      setToast("The voice path isn't open yet. Ask them to tap Talk again.");
+                      setToast(voiceLine(result, "you"));
                       return;
                     }
                     p2p.send({ k: "call-yes", n: name }, call.id);
                     worldRef.current?.setTalking(call.id, true);
+                    worldRef.current?.setSelfTalking(true);
                     worldRef.current?.announce(`${name} and ${call.name} are talking.`);
                     setCall({ ...call, phase: "live" });
                     setToast("You're talking. Voice only.");
@@ -695,6 +743,28 @@ function Village({
             </button>
           </section>
         ) : null}
+        {(call?.phase === "live" || call?.phase === "out") ? (
+          <div className="vibe-live vibe-glass">
+            <strong>{call.phase === "live" ? `Talking with ${call.name}` : `Asking ${call.name}…`}</strong>
+            {call.phase === "live" ? (
+              <button
+                type="button"
+                className="vibe-btn"
+                data-on={muted}
+                onClick={() => {
+                  const next = !muted;
+                  setMuted(next);
+                  p2p.setMuted(next);
+                }}
+              >
+                {muted ? "Unmute" : "Mute"}
+              </button>
+            ) : null}
+            <button type="button" className="vibe-btn" onClick={hangUp}>
+              {call.phase === "live" ? "Hang up" : "Cancel"}
+            </button>
+          </div>
+        ) : null}
         <div className="vibe-groups" role="tablist">
           <button type="button" className="vibe-btn" data-on={group === "do"} onClick={() => setGroup("do")}>Do</button>
           <button type="button" className="vibe-btn" data-on={group === "be"} onClick={() => setGroup("be")}>Be</button>
@@ -721,12 +791,6 @@ function Village({
           ) : null}
           {group === "be" ? (
             <>
-              <button type="button" className="vibe-btn" onClick={() => {
-                worldRef.current?.doWave();
-                p2p.send({ k: "hi", n: name });
-              }}>
-                <Hand className="size-4" aria-hidden="true" /> Wave
-              </button>
               <button type="button" className="vibe-btn" data-on={status.singing} aria-pressed={status.singing} onClick={() => worldRef.current?.doSing()}>
                 <Music className="size-4" aria-hidden="true" /> Sing
               </button>
@@ -739,49 +803,11 @@ function Village({
               <button type="button" className="vibe-btn" data-on={status.sitting} aria-pressed={status.sitting} onClick={() => worldRef.current?.doSit()}>
                 <Armchair className="size-4" aria-hidden="true" /> Sit
               </button>
-              <button
-                type="button"
-                className="vibe-btn"
-                data-on={call?.phase === "live" || call?.phase === "out"}
-                onClick={() => {
-                  if (call && call.phase !== "in") {
-                    p2p.send({ k: "call-end" }, call.id);
-                    p2p.endVoice();
-                    worldRef.current?.setTalking(call.id, false);
-                    worldRef.current?.announce(`${name} lets the talk rest.`);
-                    setCall(null);
-                    setToast("The talk rests.");
-                    return;
-                  }
-                  const near = worldRef.current?.nearestRemote(8);
-                  if (!near) {
-                    setToast("Walk over to someone with a green dot.");
-                    return;
-                  }
-                  const ready = p2p.peers.some((p) => p.id === near.id && (p.connectionState === "connected" || p.connectionState === "connecting" || p.relayed));
-                  if (!ready) {
-                    setToast(`${near.name} is still on the way.`);
-                    return;
-                  }
-                  const priming = p2p.primeVoice(near.id);
-                  p2p.send({ k: "call", n: name }, near.id);
-                  worldRef.current?.announce(`${name} asks ${near.name} to talk.`);
-                  setCall({ id: near.id, name: near.name, phase: "out" });
-                  setToast(`Waiting for ${near.name} to allow the microphone…`);
-                  void priming.then((mic) => {
-                    if (mic === "ok") return;
-                    setCall((current) => {
-                      if (!current || current.id !== near.id || current.phase === "live") return current;
-                      p2p.send({ k: "call-fail", why: "no-mic" }, near.id);
-                      p2p.endVoice();
-                      setToast("Your microphone didn't open. Allow it for the page, then tap Talk.");
-                      return null;
-                    });
-                  });
-                }}
-              >
-                <Phone className="size-4" aria-hidden="true" /> {call?.phase === "live" ? "Hang up" : call?.phase === "out" ? "Calling" : "Talk"}
-              </button>
+              {!call && worldRef.current?.nearestRemote(4.6) ? (
+                <button type="button" className="vibe-btn" onClick={startTalk}>
+                  <Phone className="size-4" aria-hidden="true" /> Talk
+                </button>
+              ) : null}
             </>
           ) : null}
           {group === "give" ? (
