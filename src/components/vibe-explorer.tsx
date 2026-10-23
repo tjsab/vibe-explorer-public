@@ -41,7 +41,7 @@ type CallState = { id: string; name: string; phase: "in" | "out" | "live" };
 
 function readRoom() {
   const raw = new URLSearchParams(window.location.search).get("room") ?? "village";
-  const clean = raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24);
+  const clean = raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24).toLowerCase();
   return clean || "village";
 }
 
@@ -480,7 +480,7 @@ function Village({
   };
 
   const commitRoom = (value: string) => {
-    const clean = value.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "village";
+    const clean = value.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24).toLowerCase() || "village";
     setRoomDraft(clean);
     if (clean !== room) onRoom(clean);
   };

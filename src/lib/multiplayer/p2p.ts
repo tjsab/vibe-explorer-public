@@ -81,7 +81,7 @@ interface PeerSlot {
 const FAST_POLL_MS = 400;
 const IDLE_POLL_MS = 2000;
 const PING_INTERVAL_MS = 2000;
-const STALL_MS = 10_000;
+const STALL_MS = 25_000;
 
 /** Public room relay. GitHub Pages is static, so the meadow calls this. */
 export const PUBLIC_RTC_URL = "https://vibe-rtc.morning-myth-634.workers.dev/api/rtc";
@@ -90,7 +90,7 @@ export function rtcBase(): string {
   if (typeof location !== "undefined" && location.hostname.endsWith("github.io")) return PUBLIC_RTC_URL;
   return "/api/rtc";
 }
-const MAX_RECOVERY_ATTEMPTS = 3;
+const MAX_RECOVERY_ATTEMPTS = 6;
 const SIGNAL_RETRY_DELAYS_MS = [250, 750];
 
 export function defaultIceServers(): RTCIceServer[] {
@@ -98,13 +98,126 @@ export function defaultIceServers(): RTCIceServer[] {
     ?.split(",")
     .map((u) => u.trim())
     .filter(Boolean);
-  // Two independent providers: ICE queries all of them in parallel during
-  // gathering, so either one being unreachable costs nothing.
+  const turn = relayCredential();
   return [
     {
-      urls: urls?.length ? urls : ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478"],
+      urls: urls?.length
+        ? urls
+        : ["stun:stun.l.google.com:19302", "stun:stun.cloudflare.com:3478", "stun:stun.relay.metered.ca:80"],
+    },
+    {
+      urls: [
+        "turn:staticauth.openrelay.metered.ca:80",
+        "turn:staticauth.openrelay.metered.ca:443",
+        "turn:staticauth.openrelay.metered.ca:443?transport=tcp",
+        "turns:staticauth.openrelay.metered.ca:443?transport=tcp",
+      ],
+      username: turn.username,
+      credential: turn.credential,
     },
   ];
+}
+
+/** Time-limited username for the public relay. Secret is the published Open Relay static auth secret. */
+function relayCredential() {
+  const username = `${Math.floor(Date.now() / 1000) + 12 * 60 * 60}:vibe`;
+  return { username, credential: hmacSha1Base64("openrelayprojectsecret", username) };
+}
+
+function hmacSha1Base64(key: string, message: string) {
+  const block = 64;
+  let keyBytes = utf8(key);
+  if (keyBytes.length > block) keyBytes = sha1(keyBytes);
+  const ipad = new Uint8Array(block);
+  const opad = new Uint8Array(block);
+  ipad.set(keyBytes);
+  opad.set(keyBytes);
+  for (let i = 0; i < block; i += 1) {
+    ipad[i] ^= 0x36;
+    opad[i] ^= 0x5c;
+  }
+  const inner = sha1(concat(ipad, utf8(message)));
+  return bytesToBase64(sha1(concat(opad, inner)));
+}
+
+function utf8(value: string) {
+  return new TextEncoder().encode(value);
+}
+
+function concat(a: Uint8Array, b: Uint8Array) {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a);
+  out.set(b, a.length);
+  return out;
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let raw = "";
+  for (const byte of bytes) raw += String.fromCharCode(byte);
+  return btoa(raw);
+}
+
+function sha1(bytes: Uint8Array) {
+  const bitLength = bytes.length * 8;
+  const withPad = new Uint8Array(((bytes.length + 9 + 63) & ~63));
+  withPad.set(bytes);
+  withPad[bytes.length] = 0x80;
+  const view = new DataView(withPad.buffer);
+  view.setUint32(withPad.length - 4, bitLength, false);
+  let h0 = 0x67452301;
+  let h1 = 0xefcdab89;
+  let h2 = 0x98badcfe;
+  let h3 = 0x10325476;
+  let h4 = 0xc3d2e1f0;
+  const w = new Uint32Array(80);
+  for (let offset = 0; offset < withPad.length; offset += 64) {
+    for (let i = 0; i < 16; i += 1) w[i] = view.getUint32(offset + i * 4, false);
+    for (let i = 16; i < 80; i += 1) {
+      const n = w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16];
+      w[i] = (n << 1) | (n >>> 31);
+    }
+    let a = h0;
+    let b = h1;
+    let c = h2;
+    let d = h3;
+    let e = h4;
+    for (let i = 0; i < 80; i += 1) {
+      let f: number;
+      let k: number;
+      if (i < 20) {
+        f = (b & c) | (~b & d);
+        k = 0x5a827999;
+      } else if (i < 40) {
+        f = b ^ c ^ d;
+        k = 0x6ed9eba1;
+      } else if (i < 60) {
+        f = (b & c) | (b & d) | (c & d);
+        k = 0x8f1bbcdc;
+      } else {
+        f = b ^ c ^ d;
+        k = 0xca62c1d6;
+      }
+      const temp = (((a << 5) | (a >>> 27)) + f + e + k + w[i]) >>> 0;
+      e = d;
+      d = c;
+      c = (b << 30) | (b >>> 2);
+      b = a;
+      a = temp;
+    }
+    h0 = (h0 + a) >>> 0;
+    h1 = (h1 + b) >>> 0;
+    h2 = (h2 + c) >>> 0;
+    h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0;
+  }
+  const out = new Uint8Array(20);
+  const digest = new DataView(out.buffer);
+  digest.setUint32(0, h0, false);
+  digest.setUint32(4, h1, false);
+  digest.setUint32(8, h2, false);
+  digest.setUint32(12, h3, false);
+  digest.setUint32(16, h4, false);
+  return out;
 }
 
 export class P2PRoom {
@@ -451,7 +564,15 @@ export class P2PRoom {
     this.peers.set(peerId, slot);
 
     pc.onicecandidate = (e) => {
+      slot.lastProgressAt = Date.now();
       if (e.candidate) void this.sendSignal(peerId, "ice", e.candidate.toJSON());
+    };
+    pc.oniceconnectionstatechange = () => {
+      const ice = pc.iceConnectionState;
+      if (ice === "checking" || ice === "connected" || ice === "completed") {
+        slot.lastProgressAt = Date.now();
+        slot.terminal = false;
+      }
     };
     pc.onconnectionstatechange = () => {
       slot.info.connectionState = pc.connectionState;
@@ -711,9 +832,15 @@ export class P2PRoom {
         this.emitPeers();
       }
       if (slot.terminal || live === "connected") continue;
+      const ice = slot.pc.iceConnectionState;
+      if (ice === "checking" || ice === "connected" || ice === "completed") {
+        slot.lastProgressAt = now;
+        continue;
+      }
       if (now - slot.lastProgressAt <= STALL_MS) continue;
       if (slot.recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
         slot.terminal = true;
+        slot.info.connectionState = "failed";
         this.emitPeers();
         continue;
       }
