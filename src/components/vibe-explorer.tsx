@@ -147,6 +147,9 @@ function Village({
     food: 0,
     market: 0,
     service: 0,
+    ready: 0,
+    rank: "Neighbor",
+    nextCost: 8,
     singing: false,
     sitting: false,
     quiet: false,
@@ -326,6 +329,8 @@ function Village({
       if (!connectedSet.has(id)) seen.current.delete(id);
     }
     world?.retainRemotes(connectedSet);
+    const ids = [p2p.selfId, ...connected];
+    world?.setDuty(ids.reduce((a, b) => (a < b ? a : b)) === p2p.selfId);
   }, [p2p.peers, p2p.selfId, p2p.send]);
 
   useEffect(() => {
@@ -659,6 +664,15 @@ function Village({
           </button>
           <button type="button" className="vibe-btn" onClick={() => worldRef.current?.leaveBasket()}>
             <Gift className="size-4" aria-hidden="true" /> Market · {status.service}
+          </button>
+          <button
+            type="button"
+            className="vibe-btn"
+            data-on={status.nextCost > 0 && status.ready >= status.nextCost}
+            onClick={() => worldRef.current?.rise()}
+          >
+            <Flower2 className="size-4" aria-hidden="true" />{" "}
+            {status.rank === "Guide" ? "Call table" : `${status.rank} · ${status.ready}`}
           </button>
           <button
             type="button"

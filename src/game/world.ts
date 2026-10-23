@@ -18,6 +18,9 @@ export type Status = {
   food: number;
   market: number;
   service: number;
+  ready: number;
+  rank: string;
+  nextCost: number;
   singing: boolean;
   sitting: boolean;
   quiet: boolean;
@@ -37,6 +40,13 @@ export type WorldHooks = {
 const ACTIONS: Action[] = ["idle", "walk", "dance", "sit", "quiet", "sing", "wave", "eat"];
 const WALK_SPEED = 6.6;
 const WORLD = 54;
+const RANKS = [
+  { name: "Neighbor", cost: 0, basket: 12, song: 8.3, gift: "You are part of the meadow." },
+  { name: "Helper", cost: 8, basket: 16, song: 10, gift: "Your basket holds more." },
+  { name: "Keeper", cost: 20, basket: 16, song: 14, gift: "Your song carries farther." },
+  { name: "Host", cost: 36, basket: 20, song: 14, gift: "A small light stays with you." },
+  { name: "Guide", cost: 60, basket: 20, song: 18, gift: "You can call neighbors to the stall." },
+] as const;
 
 declare global {
   interface Window {
@@ -535,6 +545,19 @@ export class VillageWorld {
   private food = 0;
   private marketFood = 0;
   private service = 0;
+  private spent = 0;
+  private duty = true;
+  private nextMeal = 20;
+  private meal: Wanderer | null = null;
+  private tableUntil = 0;
+  private practiceLight: THREE.PointLight | null = null;
+  private sitWith = 0;
+  private sang = 0;
+  private quietFrom: { x: number; z: number; t: number } | null = null;
+  private cdCompany = 0;
+  private cdSong = 0;
+  private cdStill = 0;
+  private cdWave = 0;
   private readonly scores = new Map<string, number>();
   private board: THREE.Sprite | null = null;
   private readonly marketPile: THREE.Mesh[] = [];
@@ -781,6 +804,155 @@ export class VillageWorld {
     };
   }
 
+  setDuty(on: boolean) {
+    this.duty = on;
+  }
+
+  private rankIndex() {
+    let index = 0;
+    for (let i = 0; i < RANKS.length; i += 1) if (this.spent >= RANKS[i].cost) index = i;
+    return index;
+  }
+
+  private rank() {
+    return RANKS[this.rankIndex()];
+  }
+
+  private basketCap() {
+    return this.rank().basket;
+  }
+
+  private unspent() {
+    return Math.max(0, this.service - this.spent);
+  }
+
+  private applyRank() {
+    if (!this.player) return;
+    if (this.rankIndex() >= 3 && !this.practiceLight) {
+      this.practiceLight = new THREE.PointLight(0xffd2a0, 1.6, 9);
+      this.practiceLight.position.y = 1.7;
+      this.player.add(this.practiceLight);
+    }
+    if (this.practiceLight) this.practiceLight.visible = this.rankIndex() >= 3;
+  }
+
+  rise() {
+    this.applyRank();
+    if (this.rankIndex() >= RANKS.length - 1) {
+      this.callTable();
+      return;
+    }
+    const next = RANKS[this.rankIndex() + 1];
+    const need = next.cost - this.spent;
+    if (this.unspent() < need) {
+      this.hooks.onToast(
+        `${need} service set aside makes a ${next.name}. You have ${this.unspent()} ready. ${this.practiceLine()}`,
+      );
+      return;
+    }
+    this.spent = next.cost;
+    this.persistRoom();
+    this.applyRank();
+    this.hooks.onToast(`You become a ${next.name}. ${next.gift}`);
+    this.feed(`${this.name} becomes a ${next.name}.`, true);
+    this.emitStatus();
+  }
+
+  private callTable() {
+    if (this.rankIndex() < RANKS.length - 1) return;
+    if (this.marketFood <= 0) {
+      this.hooks.onToast("The stall is empty. Set food out before you call anyone.");
+      return;
+    }
+    this.tableUntil = this.elapsed + 16;
+    this.hooks.onToast("You call the neighbors to the stall.");
+    this.feed(`${this.name} calls everyone to the stall.`, true);
+  }
+
+  private grantPractice(amount: number, line: string) {
+    this.addService(this.name, amount);
+    this.hooks.onToast(`${line} Service ${this.service}.`);
+    this.feed(`${this.name}: ${line}`, true);
+    this.hooks.onMarket?.({ op: "score", p: this.service });
+    this.emitStatus();
+  }
+
+  private someoneClose(reach: number) {
+    for (const person of this.people) {
+      if (!person.name) continue;
+      if (Math.hypot(person.x - this.px, person.z - this.pz) <= reach) return true;
+    }
+    for (const remote of this.remotes.values()) {
+      if (Math.hypot(remote.x - this.px, remote.z - this.pz) <= reach) return true;
+    }
+    return false;
+  }
+
+  private practiceLine() {
+    const next = RANKS[Math.min(RANKS.length - 1, this.rankIndex() + 1)];
+    if (this.rankIndex() < RANKS.length - 1 && this.unspent() >= next.cost - this.spent) return "You can rise when you want.";
+    const hints = [
+      "Sit beside someone and stay a little while.",
+      "Sing until a neighbor is with you.",
+      "Take a quiet minute without wandering off.",
+      "Wave when someone is near.",
+      "Keep the stall from going empty.",
+    ];
+    return hints[Math.floor(this.elapsed / 12) % hints.length];
+  }
+
+  private stepPractice(dt: number) {
+    if (this.mode === "sit" && this.someoneClose(6)) this.sitWith += dt;
+    else this.sitWith = 0;
+    if (this.sitWith >= 14 && this.elapsed >= this.cdCompany) {
+      this.cdCompany = this.elapsed + 55;
+      this.sitWith = 0;
+      this.grantPractice(2, "You kept someone company.");
+    }
+    if (this.mode === "sing" && this.someoneClose(this.rank().song + 2)) this.sang += dt;
+    else this.sang = 0;
+    if (this.sang >= 16 && this.elapsed >= this.cdSong) {
+      this.cdSong = this.elapsed + 55;
+      this.sang = 0;
+      this.grantPractice(2, "The song was shared.");
+    }
+    if (this.mode === "quiet") {
+      if (!this.quietFrom) this.quietFrom = { x: this.px, z: this.pz, t: 0 };
+      if (Math.hypot(this.px - this.quietFrom.x, this.pz - this.quietFrom.z) > 2.2) {
+        this.quietFrom = { x: this.px, z: this.pz, t: 0 };
+      }
+      this.quietFrom.t += dt;
+      if (this.quietFrom.t >= 18 && this.elapsed >= this.cdStill) {
+        this.cdStill = this.elapsed + 55;
+        this.quietFrom = null;
+        this.grantPractice(2, "A quiet stretch. Something settled.");
+      }
+    } else this.quietFrom = null;
+  }
+
+  private stepMeal(gather: boolean) {
+    if (this.meal) {
+      if (gather) return;
+      const d = Math.hypot(this.meal.x - this.marketAt.x, this.meal.z - this.marketAt.z);
+      if (d > 1.7) return;
+      const who = this.meal.name ?? "A neighbor";
+      this.meal = null;
+      this.nextMeal = this.elapsed + 24 + Math.random() * 16;
+      if (!this.duty || this.marketFood <= 0) return;
+      this.marketFood -= 1;
+      this.persistMarket();
+      this.refreshBoard();
+      this.feed(`${who} takes a meal from the stall.`, true);
+      this.hooks.onMarket?.({ op: "take" });
+      this.emitStatus();
+      return;
+    }
+    if (gather || !this.duty || this.marketFood <= 0 || this.elapsed < this.nextMeal) return;
+    const folks = this.people.filter((person) => person.name);
+    if (!folks.length) return;
+    this.meal = folks[Math.floor(Math.random() * folks.length)];
+  }
+
   setName(next: string) {
     const clean = next.replace(/\s+/g, " ").trim().slice(0, 24);
     if (!clean || clean === this.name) return;
@@ -902,7 +1074,7 @@ export class VillageWorld {
   }
 
   receiveFood(fromName: string) {
-    this.food = Math.min(12, this.food + 1);
+    this.food = Math.min(this.basketCap(), this.food + 1);
     this.persistFood();
     this.hooks.onToast(`${fromName} shares something from the garden.`);
     this.emitStatus();
@@ -914,6 +1086,10 @@ export class VillageWorld {
     this.greetTimer = 8;
     this.hooks.onToast("You wave across the meadow.");
     this.feed(`${this.name} waves across the meadow.`, true);
+    if (this.elapsed >= this.cdWave && this.someoneClose(7)) {
+      this.cdWave = this.elapsed + 40;
+      this.grantPractice(1, "You welcomed someone.");
+    }
   }
 
   doSing() {
@@ -1017,13 +1193,20 @@ export class VillageWorld {
       return 0;
     }
     const qty = this.food;
+    const wasBare = this.marketFood === 0;
     this.food = 0;
     this.persistFood();
-    this.addService(this.name, qty);
+    this.addService(this.name, qty + (wasBare ? 1 : 0));
     this.marketFood = Math.min(99, this.marketFood + qty);
     this.persistMarket();
     this.refreshBoard();
-    this.hooks.onToast(qty === 1 ? "You leave one at the stall." : `You leave ${qty} at the stall.`);
+    this.hooks.onToast(
+      wasBare
+        ? "The stall was bare. Leaving this mattered."
+        : qty === 1
+          ? "You leave one at the stall."
+          : `You leave ${qty} at the stall.`,
+    );
     this.feed(`${this.name} leaves ${qty} at the market. Service ${this.service}.`, true);
     this.hooks.onMarket?.({ op: "give", qty });
     this.emitStatus();
@@ -1039,7 +1222,7 @@ export class VillageWorld {
       this.hooks.onToast("The stall is empty.");
       return 0;
     }
-    if (this.food >= 12) {
+    if (this.food >= this.basketCap()) {
       this.hooks.onToast("Your basket is full.");
       return 0;
     }
@@ -1120,7 +1303,7 @@ export class VillageWorld {
   }
 
   private loadRoom() {
-    let saved: { service?: number; market?: number; food?: number; scores?: { n: string; p: number }[] } | null = null;
+    let saved: { service?: number; market?: number; food?: number; spent?: number; scores?: { n: string; p: number }[] } | null = null;
     try {
       const raw = localStorage.getItem(`vibe-room:${this.roomId}`);
       if (raw) saved = JSON.parse(raw) as typeof saved;
@@ -1140,8 +1323,10 @@ export class VillageWorld {
     const market = Number(saved?.market ?? 0);
     const food = Number(saved?.food ?? 0);
     this.service = Number.isFinite(service) ? Math.max(0, Math.min(999, Math.floor(service))) : 0;
+    const spent = Number(saved?.spent ?? 0);
+    this.spent = Number.isFinite(spent) ? Math.max(0, Math.min(this.service, Math.floor(spent))) : 0;
     this.marketFood = Number.isFinite(market) ? Math.max(0, Math.min(99, Math.floor(market))) : 0;
-    this.food = Number.isFinite(food) ? Math.max(0, Math.min(12, Math.floor(food))) : 0;
+    this.food = Number.isFinite(food) ? Math.max(0, Math.min(this.basketCap(), Math.floor(food))) : 0;
     for (const row of saved?.scores ?? []) {
       if (!row || typeof row.n !== "string" || typeof row.p !== "number") continue;
       const who = asAnon(row.n, row.n);
@@ -1158,7 +1343,14 @@ export class VillageWorld {
         .map(([n, p]) => ({ n, p }));
       localStorage.setItem(
         `vibe-room:${this.roomId}`,
-        JSON.stringify({ name: this.name, service: this.service, market: this.marketFood, food: this.food, scores }),
+        JSON.stringify({
+          name: this.name,
+          service: this.service,
+          spent: this.spent,
+          market: this.marketFood,
+          food: this.food,
+          scores,
+        }),
       );
     } catch {
       /* private mode */
@@ -1188,11 +1380,16 @@ export class VillageWorld {
     const now = Date.now();
     let picked = 0;
     let tended = 0;
+    let full = false;
     for (const crop of this.crops) {
       if (Math.hypot(crop.x - this.px, crop.z - this.pz) > 4.1) continue;
       if (crop.until <= now) {
+        if (this.food >= this.basketCap()) {
+          full = true;
+          continue;
+        }
         crop.until = now + 20000;
-        this.food = Math.min(12, this.food + 1);
+        this.food += 1;
         picked += 1;
         this.hooks.onHarvest(crop.id, crop.until);
       } else {
@@ -1211,7 +1408,8 @@ export class VillageWorld {
     } else if (tended) {
       this.hooks.onToast(tended === 1 ? "You tend a sprout." : `You tend ${tended} sprouts.`);
       this.feed(`${this.name} tends the sprouts.`, true);
-    } else this.hooks.onToast("Nothing in reach. The plots are west of the path.");
+    } else if (full) this.hooks.onToast("The basket is full. Leave some at the stall.");
+    else this.hooks.onToast("Nothing in reach. The plots are west of the path.");
     this.emitStatus();
   }
 
@@ -1392,10 +1590,15 @@ export class VillageWorld {
   }
 
   private emitStatus() {
+    this.applyRank();
+    const nextRank = RANKS[Math.min(RANKS.length - 1, this.rankIndex() + 1)];
     const status: Status = {
       food: this.food,
       market: this.marketFood,
       service: this.service,
+      ready: this.unspent(),
+      rank: this.rank().name,
+      nextCost: this.rankIndex() >= RANKS.length - 1 ? 0 : nextRank.cost - this.spent,
       singing: this.mode === "sing",
       sitting: this.mode === "sit",
       quiet: this.mode === "quiet",
@@ -1567,6 +1770,8 @@ export class VillageWorld {
     this.fireLight.intensity = 14 + Math.sin(this.elapsed * 7) * 3;
 
     this.stepPeople(dt, gather);
+    this.stepMeal(gather);
+    this.stepPractice(dt);
     this.noteVillagers();
     this.stepCritters(dt);
     this.stepRemotes(dt);
@@ -1610,10 +1815,11 @@ export class VillageWorld {
     else if (sprouts) next = "Tend a sprout to hurry it.";
     else if (this.nearMarket()) {
       next = this.marketFood
-        ? `The stall holds ${this.marketFood}. Leave the basket to earn service.`
-        : "The stall is empty. A full basket can start it.";
+        ? `The stall holds ${this.marketFood}. Neighbors eat from it, so it will not stay full.`
+        : "The stall is empty. Neighbors are waiting on a basket.";
     } else if (person) next = `${person.name} is here. Tap them to wave.`;
-    else if (this.food > 0) next = `Basket ${this.food}. Leave it at the market, east of the fire.`;
+    else if (this.food > 0) next = `Basket ${this.food}. The stall is east of the fire, and it gets used.`;
+    else next = this.practiceLine();
     if (next !== this.nearby) {
       this.nearby = next;
       this.emitStatus();
@@ -1666,15 +1872,20 @@ export class VillageWorld {
       let tx = p.tx;
       let tz = p.tz;
       if (gather) {
+        const reach = this.mode === "sing" ? this.rank().song : 8.3;
         const ang = (index / this.people.length) * Math.PI * 2;
-        tx = Math.cos(ang) * 8.3;
-        tz = Math.sin(ang) * 8.3;
+        tx = Math.cos(ang) * reach;
+        tz = Math.sin(ang) * reach;
+      } else if (this.elapsed < this.tableUntil || p === this.meal) {
+        const ang = (index / this.people.length) * Math.PI * 2;
+        tx = this.marketAt.x + Math.cos(ang) * 2.4;
+        tz = this.marketAt.z + Math.sin(ang) * 2.4;
       }
       let dx = tx - p.x;
       let dz = tz - p.z;
       const len = Math.hypot(dx, dz);
       let moving = false;
-      if (!gather && len < 0.8) {
+      if (!gather && this.elapsed >= this.tableUntil && p !== this.meal && len < 0.8) {
         p.tx = p.x + (Math.random() - 0.5) * 14;
         p.tz = p.z + (Math.random() - 0.5) * 14;
         p.tx = Math.max(-40, Math.min(40, p.tx));
