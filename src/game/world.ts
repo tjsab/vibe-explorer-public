@@ -112,6 +112,10 @@ type Wanderer = {
   kind: "person" | "cow" | "dog" | "hen" | "rabbit" | "sheep" | "butterfly";
   name?: string;
   lines?: string[];
+  later?: string[];
+  place?: "fire" | "market" | "water" | "garden" | "well";
+  known: number;
+  rest: number;
   line: number;
   until: number;
 };
@@ -441,93 +445,150 @@ export function isPose(data: unknown): data is PoseMsg {
   );
 }
 
-const VILLAGERS: { name: string; color: number; skin: number; x: number; z: number; lines: string[] }[] = [
+const VILLAGERS: {
+  name: string;
+  color: number;
+  skin: number;
+  x: number;
+  z: number;
+  place: "fire" | "market" | "water" | "garden" | "well";
+  lines: string[];
+  later: string[];
+}[] = [
   {
     name: "Anon 1842",
     color: 0xc45c4a,
     skin: 0xf0c09a,
-    x: 4.2,
-    z: 3.4,
+    x: 2.4,
+    z: 2.2,
+    place: "fire",
     lines: [
-      "If you sing, the rest of us just walk over. That's the whole custom.",
-      "Take what you need from the garden, and leave the roots.",
+      "I was here before the path went smooth. People still sit, talk a little, and leave quieter than they came.",
+      "If a song starts, don't wait to be good at it. The others hear it and walk over. That's the whole custom.",
+      "Some evenings I don't say anything. The logs are fine with that.",
+    ],
+    later: [
+      "You came back. The log that faces the trees is open.",
+      "I don't need the name you use outside. I know how you stand when the fire is low.",
     ],
   },
   {
     name: "Anon 2904",
     color: 0x3d7ea6,
     skin: 0xc98a62,
-    x: -5.4,
-    z: 5.5,
+    x: -28,
+    z: -8,
+    place: "garden",
     lines: [
-      "A sprout hurries if you tend it. Harvest is the same button, closer in.",
-      "Sit when you're tired. Nobody here is keeping score.",
+      "The garden doesn't hurry. Tend a sprout if you want. Or just look at it. Both count as visiting.",
+      "I used to count every handful. The plots grow back whether I count or not.",
+      "Leave a little in the ground. Someone is already on the way.",
+    ],
+    later: [
+      "Your hands know the rows now. You don't hover the way you did.",
+      "Take what you'll eat, and set the rest on the table. That's the garden finished.",
     ],
   },
   {
     name: "Anon 3317",
     color: 0xd4a054,
     skin: 0xffd2b8,
-    x: 8,
-    z: -4,
+    x: 14.5,
+    z: -7.2,
+    place: "water",
     lines: [
-      "The pond is for looking. The path goes around, not through.",
-      "Share the basket if someone is standing near you.",
+      "I come to the water when my head is loud. It doesn't answer. That's why I stay.",
+      "You can wade in. Go slow. The bottom is kinder than it looks.",
+      "Watch it long enough and you forget what you were about to do. I recommend that.",
+    ],
+    later: [
+      "You've been watching it. Good. It changes when you stop asking it to.",
+      "Sit. I'll be quiet with you. We don't have to make it a conversation.",
     ],
   },
   {
     name: "Anon 4520",
     color: 0x3e8f6e,
     skin: 0x8d5a3c,
-    x: -3,
-    z: -7,
+    x: 17.2,
+    z: 6.4,
+    place: "market",
     lines: [
-      "West of the path is the garden. Eight plots, they grow back.",
-      "A quiet minute at the fire counts as much as a song.",
+      "The round roof is where we set things down. Greens, milk, an egg. Take some if you need it. Leave some if you can.",
+      "I ate here this morning with two others. Nobody made a speech. It was the best meal of the week.",
+      "Stay a minute after you put the food down. That's the part people skip, and it's the actual meal.",
+    ],
+    later: [
+      "When you set food out, I saw it. I didn't keep a tally. I just ate, and I was glad.",
+      "You don't have to announce it. Hands on the table are announcement enough.",
     ],
   },
   {
     name: "Anon 5733",
     color: 0x8d4a6a,
     skin: 0xf0c09a,
-    x: 2,
-    z: 12,
+    x: 1.2,
+    z: 11,
+    place: "fire",
     lines: [
-      "Dance badly. It looks better when somebody else joins.",
-      "Nobody here uses a real name. Be anyone kind.",
+      "Dance if it comes up in you. Badly is welcome. It gets better when someone else is brave after you.",
+      "We don't use the names we had outside. In here you get to be kind without the old story attached.",
+      "If you feel foolish singing, good. Foolish means you stayed.",
+    ],
+    later: [
+      "I remember your first song. You thought no one would come. We came.",
+      "You don't have to perform. Standing in the circle is already being in it.",
     ],
   },
   {
     name: "Anon 6408",
     color: 0xb85c38,
     skin: 0xc98a62,
-    x: -12,
-    z: 2,
+    x: -8,
+    z: 15,
+    place: "well",
     lines: [
-      "The logs around the circle are for sitting. Stand close and press Sit.",
-      "If the link is shared, other people show up as numbers, same as us.",
+      "The well is only a well. I like it because people stop, look down, and forget what they were chasing.",
+      "If someone is sitting alone, you can sit near them and not fix a thing. That is a kindness.",
+      "Useful is fine. Tired of being useful is also fine. The well holds both.",
+    ],
+    later: [
+      "You've been sitting with people. They mention it after you go, and they smile.",
+      "Come by the well when you want a minute that isn't for anyone.",
     ],
   },
   {
     name: "Anon 7186",
     color: 0x4a6670,
     skin: 0xffd2b8,
-    x: 12,
-    z: -14,
+    x: 16,
+    z: -16,
+    place: "water",
     lines: [
-      "I like the far side of the pond in the afternoon. The reeds whisper.",
-      "Eat before the basket gets heavy. Twelve is plenty.",
+      "In the afternoon the reeds talk more than I do. I stand in them and let the light finish the day.",
+      "Eat before you get noble about it. A hungry person grabs. A fed person can pass the bowl.",
+      "The far bank is my favorite nothing. You're welcome to it.",
+    ],
+    later: [
+      "You look less hurried than the first time. The reeds can tell.",
+      "I didn't save you a place. I just left it open, which is better.",
     ],
   },
   {
     name: "Anon 8621",
     color: 0x6b5b95,
     skin: 0xf0c09a,
-    x: -8,
-    z: 16,
+    x: 19.4,
+    z: 10.2,
+    place: "market",
     lines: [
-      "The well is just for the look of it. The garden is the real work.",
-      "When a song starts, come anyway. You don't have to know the words.",
+      "When a song starts, come even if you don't know it. Being there is most of the singing.",
+      "The work here is small. A pail, an egg, a handful of leaves, a quiet minute. A day can be made of that.",
+      "Don't turn a kindness into a story about yourself. Hand it over, then stay and eat.",
+    ],
+    later: [
+      "You keep showing up. I notice, and then I try not to make a fuss about noticing.",
+      "If you helped today, let it be done. The table remembers better than a list does.",
     ],
   },
 ];
@@ -622,6 +683,10 @@ export class VillageWorld {
   private audio: AudioContext | null = null;
   private master: GainNode | null = null;
   private forest: GainNode | null = null;
+  private waterGain: GainNode | null = null;
+  private birdNext = 0;
+  private readonly known = new Map<string, number>();
+  private presenceNoted = false;
   private forestSources: AudioScheduledSourceNode[] = [];
   private forestReady = false;
   private heard = false;
@@ -770,7 +835,7 @@ export class VillageWorld {
     });
 
     this.emitStatus();
-    this.hooks.onToast("Drag the open grass to look around. The garden is west.");
+    this.hooks.onToast("The open grass is yours. Look around. The garden is west, the water is east.");
     const loop = () => {
       if (this.dead) return;
       this.raf = requestAnimationFrame(loop);
@@ -932,6 +997,12 @@ export class VillageWorld {
       this.hoard = 0;
       this.addWeight();
     }
+    if (this.present() && !this.presenceNoted) {
+      this.presenceNoted = true;
+      if (this.nearWater()) this.hooks.onToast("The water doesn't need anything from you.");
+      else if (this.someoneClose(5.2)) this.hooks.onToast("You can be here and not fill the quiet.");
+      else this.hooks.onToast("Stay. Nothing is being asked.");
+    }
     if (this.present()) this.weight = Math.max(0, this.weight - dt * 0.08);
     this.care = Math.max(0, this.care - dt * 0.004);
     if (this.stillPoint || this.rankIndex() < RANKS.length - 1 || !this.present()) return;
@@ -965,7 +1036,7 @@ export class VillageWorld {
     this.spent = next.cost;
     this.persistRoom();
     this.applyRank();
-    this.hooks.onToast(`You become a ${next.name}. ${next.gift}`);
+    this.hooks.onToast(next.gift);
     this.feed(`${this.name} becomes a ${next.name}.`, true);
     this.emitStatus();
   }
@@ -977,8 +1048,8 @@ export class VillageWorld {
       return;
     }
     this.tableUntil = this.elapsed + 16;
-    this.hooks.onToast("You call the neighbors to the stall.");
-    this.feed(`${this.name} calls everyone to the stall.`, true);
+    this.hooks.onToast("You call them to the table.");
+    this.feed(`${this.name} calls everyone to the table.`, true);
   }
 
   private grantPractice(amount: number, line: string) {
@@ -1115,14 +1186,14 @@ export class VillageWorld {
     if (this.sitWith >= 14 && this.elapsed >= this.cdCompany) {
       this.cdCompany = this.elapsed + 55;
       this.sitWith = 0;
-      this.grantPractice(2, "You kept someone company.");
+      this.grantPractice(2, "You stayed. That was enough.");
     }
     if (this.mode === "sing" && this.someoneClose(this.rank().song + 2)) this.sang += dt;
     else this.sang = 0;
     if (this.sang >= 16 && this.elapsed >= this.cdSong) {
       this.cdSong = this.elapsed + 55;
       this.sang = 0;
-      this.grantPractice(2, "The song was shared.");
+      this.grantPractice(2, "Someone came and sang with you.");
     }
     if (this.mode === "quiet") {
       if (!this.quietFrom) this.quietFrom = { x: this.px, z: this.pz, t: 0 };
@@ -1133,7 +1204,7 @@ export class VillageWorld {
       if (this.quietFrom.t >= 18 && this.elapsed >= this.cdStill) {
         this.cdStill = this.elapsed + 55;
         this.quietFrom = null;
-        this.grantPractice(2, "A quiet stretch. Something settled.");
+        this.grantPractice(2, "The minute passed on its own.");
       }
     } else this.quietFrom = null;
   }
@@ -1154,7 +1225,7 @@ export class VillageWorld {
       this.persistMarket();
       this.refreshBoard();
       const label = good === "milk" ? "milk" : good === "eggs" ? "an egg" : "greens";
-      this.feed(`${who} takes ${label} from the stall.`, true);
+      this.feed(`${who} sits down with ${label}.`, true);
       this.hooks.onMarket?.({ op: "take", good });
       this.emitStatus();
       return;
@@ -1463,7 +1534,7 @@ export class VillageWorld {
     this.emoteUntil = this.elapsed + 1.2;
     this.addService(this.name, 1);
     this.noteCare(1);
-    this.hooks.onToast(`You offer food to ${near.name}.`);
+    this.hooks.onToast(`You put it in ${near.name}'s hands.`);
     this.feed(`${this.name} shares food with ${near.name}.`, true);
     this.hooks.onMarket?.({ op: "score", p: this.service });
     this.emitStatus();
@@ -1500,8 +1571,8 @@ export class VillageWorld {
       milk ? `${milk} milk` : "",
       eggs ? `${eggs} ${eggs === 1 ? "egg" : "eggs"}` : "",
     ].filter(Boolean);
-    this.hooks.onToast(wasBare ? `The stall was bare. You set out ${parts.join(", ")}.` : `You set out ${parts.join(", ")}.`);
-    this.feed(`${this.name} sets ${parts.join(", ")} on the stall.`, true);
+    this.hooks.onToast(wasBare ? "The table was empty. It isn't now." : "You set it on the table. Stay if you want.");
+    this.feed(`${this.name} sets food on the table.`, true);
     this.hooks.onMarket?.({ op: "give", greens, milk, eggs });
     this.emitStatus();
     return points;
@@ -1541,7 +1612,7 @@ export class VillageWorld {
     const thin = this.marketFood + this.stallMilk + this.stallEggs === 0;
     const hands = this.food + this.milk + this.eggs;
     if (thin && hands > 2) this.addWeight();
-    this.hooks.onToast(`You take ${label} from the stall.`);
+    this.hooks.onToast(thin && hands > 2 ? "You took the last of it." : "You take a little from the table.");
     this.feed(`${this.name} takes ${label} from the stall.`, true);
     this.hooks.onMarket?.({ op: "take", good });
     this.emitStatus();
@@ -1662,6 +1733,7 @@ export class VillageWorld {
       weight?: number;
       still?: number;
       stillPoint?: boolean;
+      known?: { n: string; k: number }[];
       scores?: { n: string; p: number }[];
     } | null = null;
     try {
@@ -1710,6 +1782,10 @@ export class VillageWorld {
       this.scores.set(who, Math.max(0, Math.min(999, Math.floor(row.p))));
     }
     if (this.service > 0) this.scores.set(this.name, Math.max(this.scores.get(this.name) ?? 0, this.service));
+    for (const row of saved?.known ?? []) {
+      if (!row || typeof row.n !== "string" || typeof row.k !== "number") continue;
+      this.known.set(row.n, Math.max(0, Math.min(99, Math.floor(row.k))));
+    }
   }
 
   private persistRoom() {
@@ -1735,6 +1811,7 @@ export class VillageWorld {
           weight: Math.round(this.weight * 10) / 10,
           still: Math.floor(this.still),
           stillPoint: this.stillPoint,
+          known: [...this.known.entries()].slice(0, 16).map(([n, k]) => ({ n, k })),
           scores,
         }),
       );
@@ -1745,13 +1822,12 @@ export class VillageWorld {
 
   private refreshBoard() {
     if (this.board) {
-      const lines = [`Greens ${this.marketFood}`, `Milk ${this.stallMilk}`, `Eggs ${this.stallEggs}`];
-      const ranked = [...this.scores.entries()]
-        .filter(([, points]) => points > 0)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 4);
-      if (!ranked.length) lines.push("Be the first");
-      else for (const [who, points] of ranked) lines.push(`${who} · ${points}`);
+      const lines = [
+        this.marketFood > 0 ? `${this.marketFood} greens` : "No greens",
+        this.stallMilk > 0 ? `${this.stallMilk} milk` : "No milk",
+        this.stallEggs > 0 ? `${this.stallEggs} eggs` : "No eggs",
+        this.marketFood + this.stallMilk + this.stallEggs > 0 ? "Take what you need" : "The table is clear",
+      ];
       const prev = this.board.material.map;
       this.board.material.map = paintBoard(lines);
       this.board.material.needsUpdate = true;
@@ -1790,7 +1866,7 @@ export class VillageWorld {
     }
     this.persistFood();
     if (picked) {
-      this.hooks.onToast(picked === 1 ? "You pick from the garden." : `You pick ${picked} from the garden.`);
+      this.hooks.onToast(picked === 1 ? "You pick a handful." : "You pick enough for the table.");
       this.feed(
         `${this.name} just harvested ${picked} ${picked === 1 ? "crop" : "crops"}.`,
         true,
@@ -1879,10 +1955,25 @@ export class VillageWorld {
     hp.connect(lp);
     lp.connect(wind);
     wind.connect(bus);
+    const brook = ctx.createBufferSource();
+    brook.buffer = buffer;
+    brook.loop = true;
+    const band = ctx.createBiquadFilter();
+    band.type = "bandpass";
+    band.frequency.value = 480;
+    band.Q.value = 0.6;
+    const water = ctx.createGain();
+    water.gain.value = 0;
+    brook.connect(band);
+    band.connect(water);
+    water.connect(bus);
+    brook.start();
     noise.start();
     lfo.start();
-    this.forestSources.push(noise, lfo);
+    this.forestSources.push(noise, lfo, brook);
+    this.waterGain = water;
     this.fluteNext = ctx.currentTime + 1.4;
+    this.birdNext = ctx.currentTime + 6;
   }
 
   private playFlute(when: number, freq: number, dur: number, peak: number, dest: AudioNode) {
@@ -1940,6 +2031,16 @@ export class VillageWorld {
       }
       this.fluteNext += 3.4 + Math.random() * 4.4;
       guard += 1;
+    }
+    if (this.waterGain) {
+      const d = Math.hypot(this.px - this.pond.x, this.pz - this.pond.z);
+      const want = d < 22 ? (1 - d / 22) * 0.7 : 0;
+      this.waterGain.gain.setTargetAtTime(want, t, 0.35);
+    }
+    if (this.birdNext < t) {
+      this.playFlute(t + 0.05, 1400 + Math.random() * 500, 0.18, 0.03, this.forest);
+      this.playFlute(t + 0.28, 1700 + Math.random() * 400, 0.12, 0.02, this.forest);
+      this.birdNext = t + 7 + Math.random() * 8;
     }
   }
 
@@ -2059,8 +2160,13 @@ export class VillageWorld {
         this.hooks.onToast(`Walk closer to ${person.name}.`);
         return;
       }
-      const line = this.feltLine(person.lines[person.line % person.lines.length]);
+      const known = person.known ?? 0;
+      const pool = known >= 2 && person.later?.length ? person.later : person.lines ?? [];
+      const line = this.feltLine(pool[person.line % pool.length] ?? "I'm glad you stopped.");
       person.line += 1;
+      person.known = known + 1;
+      if (person.name) this.known.set(person.name, person.known);
+      this.persistRoom();
       this.hooks.onTalk(person.name, line);
       return;
     }
@@ -2275,6 +2381,15 @@ export class VillageWorld {
     }
   }
 
+  private hearth(place: Wanderer["place"]) {
+    if (place === "market") return this.marketAt;
+    if (place === "water") return { x: this.pond.x - 6, z: this.pond.z + 2 };
+    if (place === "garden") return { x: -28, z: -8 };
+    if (place === "well") return { x: -6, z: 15 };
+    if (place === "fire") return { x: 1.5, z: 1.5 };
+    return null;
+  }
+
   private stepPeople(dt: number, gather: boolean) {
     this.people.forEach((p, index) => {
       let tx = p.tx;
@@ -2295,10 +2410,14 @@ export class VillageWorld {
       let moving = false;
       if (!gather && this.elapsed >= this.tableUntil && p !== this.meal && len < 0.8) {
         const near = Math.hypot(p.x - this.px, p.z - this.pz);
-        if (this.care > this.weight + 6 && near < 22 && Math.random() < 0.5) {
+        const home = this.hearth(p.place);
+        if (this.care > this.weight + 6 && near < 22 && Math.random() < 0.35) {
           const ang = Math.random() * Math.PI * 2;
           p.tx = this.px + Math.sin(ang) * 2.4;
           p.tz = this.pz + Math.cos(ang) * 2.4;
+        } else if (home && Math.random() < 0.5) {
+          p.tx = home.x + (Math.random() - 0.5) * 2.2;
+          p.tz = home.z + (Math.random() - 0.5) * 2.2;
         } else if (this.weight > this.care + 8 && near < 12) {
           const away = Math.atan2(p.x - this.px, p.z - this.pz);
           p.tx = Math.max(-40, Math.min(40, p.x + Math.sin(away) * 8));
@@ -2307,6 +2426,7 @@ export class VillageWorld {
           p.tx = Math.max(-40, Math.min(40, p.x + (Math.random() - 0.5) * 14));
           p.tz = Math.max(-40, Math.min(40, p.z + (Math.random() - 0.5) * 14));
         }
+        if (Math.random() < 0.65) p.rest = this.elapsed + 6 + Math.random() * 10;
       } else if (len > 0.45) {
         dx /= len;
         dz /= len;
@@ -2319,7 +2439,7 @@ export class VillageWorld {
         p.group.rotation.y = Math.atan2(-p.x, -p.z);
       }
       p.group.position.set(p.x, 0, p.z);
-      const pose: Action = gather && len < 1.2 ? "sing" : moving ? "walk" : "idle";
+      const pose: Action = gather && len < 1.2 ? "sing" : !moving && p.rest > this.elapsed ? "sit" : moving ? "walk" : "idle";
       animateAvatar(p.group, pose, this.elapsed + p.phase);
     });
   }
@@ -2334,6 +2454,12 @@ export class VillageWorld {
       let dz = a.tz - a.z;
       const len = Math.hypot(dx, dz);
       if (len < 0.7) {
+        const dist = Math.hypot(a.x - this.px, a.z - this.pz);
+        const drawn = this.care > this.weight + 3 && dist < 14 && dist > 2.4 && a.kind !== "butterfly" && Math.random() < 0.45;
+        if (drawn) {
+          a.tx = this.px + ((a.x - this.px) / dist) * 2.5;
+          a.tz = this.pz + ((a.z - this.pz) / dist) * 2.5;
+        } else {
         const home = a.kind === "hen" || a.kind === "rabbit" ? 7 : a.kind === "butterfly" ? 16 : a.kind === "dog" ? 18 : 12;
         a.tx = a.x + (Math.random() - 0.5) * home;
         a.tz = a.z + (Math.random() - 0.5) * home;
@@ -2346,6 +2472,7 @@ export class VillageWorld {
         } else if (a.kind !== "butterfly") {
           a.tx = Math.max(-48, Math.min(48, a.tx));
           a.tz = Math.max(-48, Math.min(48, a.tz));
+        }
         }
       } else {
         dx /= len;
@@ -2926,6 +3053,21 @@ export class VillageWorld {
       this.scene.add(leaf);
     });
 
+    const jug = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1, 0.13, 0.28, 8),
+      new THREE.MeshStandardMaterial({ color: 0xc47b4a, roughness: 0.7 }),
+    );
+    jug.position.set(cx - 0.7, 1.02, cz + 0.15);
+    this.scene.add(jug);
+    [-0.35, 0.15].forEach((dz) => {
+      const cup = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.07, 0.06, 0.1, 8),
+        new THREE.MeshStandardMaterial({ color: 0xf4efe6, roughness: 0.55 }),
+      );
+      cup.position.set(cx - 0.85, 0.95, cz + dz);
+      this.scene.add(cup);
+    });
+
     const sign = makeSprite("Market", "rgba(92,59,46,0.92)", "#f6efe6", 3.15);
     sign.position.set(cx - 4.3, 2.15, cz);
     this.scene.add(sign);
@@ -3489,6 +3631,10 @@ export class VillageWorld {
         kind: "person",
         name: v.name,
         lines: v.lines,
+        later: v.later,
+        place: v.place,
+        known: this.known.get(v.name) ?? 0,
+        rest: 4 + Math.random() * 6,
         line: 0,
         until: 0,
       });
@@ -3570,6 +3716,8 @@ export class VillageWorld {
         speed,
         phase: Math.random() * 5,
         kind,
+        known: 0,
+        rest: 0,
         line: 0,
         until: 0,
       });
