@@ -2239,11 +2239,10 @@ export class VillageWorld {
   }
 
   private waveHeight(x: number, z: number) {
-    return (
-      Math.sin(x * 0.16 + this.elapsed * 1.15) * 0.22 +
-      Math.cos(z * 0.11 + this.elapsed * 0.85) * 0.14 +
-      Math.sin((x * 0.07 + z * 0.09) + this.elapsed * 1.7) * 0.06
-    );
+    const swell = Math.sin(x * 0.085 - this.elapsed * 0.72) * 0.26;
+    const cross = Math.cos(z * 0.06 + x * 0.02 + this.elapsed * 0.46) * 0.09;
+    const chop = Math.sin(x * 0.42 + z * 0.37 + this.elapsed * 2.05) * 0.03;
+    return swell + cross + chop;
   }
 
   private inSea(x: number, z: number) {
@@ -2979,7 +2978,7 @@ export class VillageWorld {
     ];
     this.islands.push(...spots.map(({ x, z, r }) => ({ x, z, r })));
 
-    const geo = new THREE.PlaneGeometry(150, 180, 48, 56);
+    const geo = new THREE.PlaneGeometry(160, 190, 70, 80);
     geo.rotateX(-Math.PI / 2);
     const sea = new THREE.Mesh(
       geo,
@@ -2992,14 +2991,15 @@ export class VillageWorld {
           varying vec3 vN;
           varying vec3 vWorld;
           void main() {
+            vec4 base = modelMatrix * vec4(position, 1.0);
+            float swell = sin(base.x * 0.085 - uTime * 0.72);
+            float cross = cos(base.z * 0.06 + base.x * 0.02 + uTime * 0.46);
+            float chop = sin(base.x * 0.42 + base.z * 0.37 + uTime * 2.05);
+            float h = swell * 0.26 + cross * 0.09 + chop * 0.03;
             vec3 p = position;
-            float w1 = sin(p.x * 0.16 + uTime * 1.15);
-            float w2 = cos(p.z * 0.11 + uTime * 0.85);
-            float w3 = sin(p.x * 0.07 + p.z * 0.09 + uTime * 1.7);
-            float h = w1 * 0.22 + w2 * 0.14 + w3 * 0.06;
             p.y += h;
-            float dx = cos(p.x * 0.16 + uTime * 1.15) * 0.035 + cos(p.x * 0.07 + p.z * 0.09 + uTime * 1.7) * 0.004;
-            float dz = -sin(p.z * 0.11 + uTime * 0.85) * 0.015 + cos(p.x * 0.07 + p.z * 0.09 + uTime * 1.7) * 0.005;
+            float dx = cos(base.x * 0.085 - uTime * 0.72) * 0.022 + cos(base.x * 0.42 + base.z * 0.37 + uTime * 2.05) * 0.012;
+            float dz = -sin(base.z * 0.06 + base.x * 0.02 + uTime * 0.46) * 0.005 + cos(base.x * 0.42 + base.z * 0.37 + uTime * 2.05) * 0.011;
             vN = normalize(vec3(-dx, 1.0, -dz));
             vH = h;
             vec4 world = modelMatrix * vec4(p, 1.0);
@@ -3011,19 +3011,29 @@ export class VillageWorld {
           varying float vH;
           varying vec3 vN;
           varying vec3 vWorld;
+          float hash(vec2 p) {
+            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+          }
           void main() {
-            vec3 deep = vec3(0.03, 0.28, 0.4);
-            vec3 shallow = vec3(0.16, 0.62, 0.64);
-            vec3 foam = vec3(0.94, 0.97, 0.95);
+            vec3 deep = vec3(0.02, 0.16, 0.28);
+            vec3 reef = vec3(0.05, 0.42, 0.42);
+            vec3 shallow = vec3(0.20, 0.62, 0.58);
+            vec3 foam = vec3(0.93, 0.96, 0.94);
+            vec3 n = normalize(vN);
             vec3 viewDir = normalize(cameraPosition - vWorld);
-            vec3 light = normalize(vec3(-0.35, 0.86, 0.28));
-            float fres = pow(1.0 - clamp(dot(normalize(vN), viewDir), 0.0, 1.0), 3.0);
-            float spec = pow(max(dot(reflect(-light, normalize(vN)), viewDir), 0.0), 64.0);
-            vec3 col = mix(deep, shallow, fres * 0.65 + 0.12);
-            col += vec3(1.0, 0.96, 0.88) * spec * 0.75;
-            float crest = smoothstep(0.16, 0.28, vH);
-            col = mix(col, foam, crest * 0.72);
-            gl_FragColor = vec4(col, 0.95);
+            vec3 light = normalize(vec3(-0.42, 0.82, 0.22));
+            float fres = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 3.2);
+            float spec = pow(max(dot(reflect(-light, n), viewDir), 0.0), 90.0);
+            float shore = smoothstep(78.0, 46.0, vWorld.x);
+            float depthMix = clamp(shore * 0.85 + fres * 0.25, 0.0, 1.0);
+            vec3 col = mix(deep, mix(reef, shallow, shore), depthMix);
+            col += vec3(1.0, 0.97, 0.9) * spec * (0.55 + fres);
+            float crest = smoothstep(0.12, 0.24, vH) * smoothstep(0.02, 0.08, abs(n.x));
+            float cells = hash(floor(vWorld.xz * 0.55 + vec2(vH * 3.0, 0.0)));
+            float lace = smoothstep(0.42, 0.72, cells);
+            float surf = shore * lace * smoothstep(0.15, 0.85, shore);
+            col = mix(col, foam, clamp(crest * 0.8 + surf * 0.9, 0.0, 0.92));
+            gl_FragColor = vec4(col, 0.96);
           }
         `,
       }),
@@ -3102,6 +3112,59 @@ export class VillageWorld {
       this.scene.add(mesh);
       this.drops.push({ mesh, vx: 0, vy: 0, vz: 0, life: 0 });
     }
+    this.addCliffs();
+  }
+
+  private addCliffs() {
+    const geo = new THREE.PlaneGeometry(240, 78, 96, 28);
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uHaze: { value: new THREE.Color(0x9db8c8) } },
+      vertexShader: `
+        varying vec2 vUv;
+        varying float vFace;
+        varying float vHaze;
+        void main() {
+          vUv = uv;
+          vec3 p = position;
+          float ridge = pow(abs(sin(p.x * 0.055 + 1.2)), 0.42);
+          float fin = pow(abs(sin(p.x * 0.16 + 0.4)), 1.6);
+          float skirt = smoothstep(-28.0, 8.0, p.y);
+          p.z += (ridge * 16.0 + fin * 7.0) * skirt;
+          p.y += ridge * 14.0 * skirt;
+          vFace = fin;
+          vec4 world = modelMatrix * vec4(p, 1.0);
+          vHaze = clamp(length(world.xz) / 240.0, 0.0, 1.0);
+          gl_Position = projectionMatrix * viewMatrix * world;
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uHaze;
+        varying vec2 vUv;
+        varying float vFace;
+        varying float vHaze;
+        void main() {
+          float ribs = 0.5 + 0.5 * sin(vUv.x * 180.0);
+          vec3 green = vec3(0.16, 0.36, 0.15);
+          vec3 moss = vec3(0.28, 0.42, 0.18);
+          vec3 rock = vec3(0.20, 0.18, 0.16);
+          float top = smoothstep(0.62, 0.92, vUv.y);
+          float wall = smoothstep(0.15, 0.55, vFace);
+          vec3 col = mix(mix(moss, green, top), rock, wall * (1.0 - top));
+          col *= 0.82 + ribs * 0.18 * wall;
+          col = mix(col, uHaze, vHaze * 0.72);
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+    });
+    const wall = new THREE.Mesh(geo, mat);
+    wall.position.set(188, 18, 0);
+    wall.rotation.y = -Math.PI / 2;
+    this.scene.add(wall);
+    const back = new THREE.Mesh(geo, mat);
+    back.position.set(214, 26, -8);
+    back.rotation.y = -Math.PI / 2;
+    back.scale.set(1.15, 1.25, 1);
+    this.scene.add(back);
   }
 
   private addPond() {
@@ -4127,6 +4190,7 @@ export class VillageWorld {
     const snow = new THREE.MeshStandardMaterial({ color: 0xf7f4ef, roughness: 0.9 });
     for (let i = 0; i < 18; i += 1) {
       const a = (i / 18) * Math.PI * 2 + 0.2;
+      if (Math.cos(a) > 0.45) continue;
       const rad = 118 + (i % 4) * 10;
       const h = 22 + (i % 5) * 8;
       const peak = new THREE.Mesh(new THREE.ConeGeometry(14 + (i % 3) * 7, h, 6), stone);
